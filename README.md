@@ -71,6 +71,15 @@ Recomendado: en **Authentication → Configuración → Acciones del usuario**, 
 - Si en la pantalla de ingreso del kiosco se entra con la cuenta de administración, se abre directamente el sistema interno.
 - Si en la pantalla de ingreso del sistema interno se entra con la cuenta del kiosco, se abre directamente el Módulo de Asistencias.
 
+## Marcas con advertencia
+El kiosco deja fichar entrada o salida en cualquier momento. En tres casos muestra primero una advertencia y pide confirmar:
+
+- **Marca repetida:** pasaron menos de 2 minutos desde la marca anterior.
+- **Entrada sin salida previa:** hay una entrada abierta.
+- **Salida sin entrada:** no hay una entrada abierta.
+
+Si el empleado confirma, la marca se guarda con una nota y en el sistema interno aparece con **⚠**. Al pasar el mouse, esa marca muestra el motivo. Con el teclado: Enter registra igual y Esc cancela.
+
 ## Frases motivadoras
 Cada vez que alguien ficha, el kiosco muestra una frase al azar en un recuadro destacado: verde al entrar y magenta al salir. Las frases se cargan en **Config. y Respaldo → Frases Motivadoras** del sistema interno, en dos listas: entrada y salida. Si una frase incluye `{nombre}`, el kiosco lo reemplaza por el nombre del empleado. Mientras no cargues ninguna, se usan las frases predeterminadas. Con **Restaurar predeterminadas** se vuelve a ellas.
 

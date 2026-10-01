@@ -1742,9 +1742,17 @@
                 const o = Datos.partesAR(new Date(f.timestampOriginal));
                 return `Corregida. Hora original: ${Datos.fechaCorta(o.fecha)} ${o.hora.slice(0, 5)}`;
             };
-            const marcaOrigen = (f) => f.editado
-                ? <span title={textoOriginal(f)} className="ml-1 text-[9px] text-amber-600 font-bold cursor-help">(E)</span>
-                : (f.origen === 'manual' ? <span title="Cargada a mano" className="ml-1 text-[9px] text-slate-400">(M)</span> : null);
+            // ⚠ = el empleado la registró en el kiosco aceptando una advertencia (marca repetida, entrada sin salida, etc.)
+            const marcaOrigen = (f) => (
+                <>
+                    {f.editado
+                        ? <span title={textoOriginal(f)} className="ml-1 text-[9px] text-amber-600 font-bold cursor-help">(E)</span>
+                        : (f.origen === 'manual' ? <span title="Cargada a mano" className="ml-1 text-[9px] text-slate-400">(M)</span> : null)}
+                    {f.origen === 'kiosco' && (f.nota || '').startsWith('Con advertencia') && (
+                        <span title={f.nota} className="ml-1 text-[11px] text-amber-600 font-black cursor-help">⚠</span>
+                    )}
+                </>
+            );
 
             const badgeTipo = (tipo) => tipo === 'entrada'
                 ? <span className="bg-emerald-100 text-emerald-700 text-[10px] font-black px-2 py-0.5 rounded-full uppercase">Entrada</span>
