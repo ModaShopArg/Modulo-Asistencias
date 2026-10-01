@@ -71,6 +71,11 @@ Recomendado: en **Authentication → Configuración → Acciones del usuario**, 
 - Si en la pantalla de ingreso del kiosco se entra con la cuenta de administración, se abre directamente el sistema interno.
 - Si en la pantalla de ingreso del sistema interno se entra con la cuenta del kiosco, se abre directamente el Módulo de Asistencias.
 
+## Frases motivadoras
+Cada vez que alguien ficha, el kiosco muestra una frase al azar en un recuadro destacado: verde al entrar y magenta al salir. Las frases se cargan en **Config. y Respaldo → Frases Motivadoras** del sistema interno, en dos listas: entrada y salida. Si una frase incluye `{nombre}`, el kiosco lo reemplaza por el nombre del empleado. Mientras no cargues ninguna, se usan las frases predeterminadas. Con **Restaurar predeterminadas** se vuelve a ellas.
+
+Las frases se guardan en Firebase, en la colección `configuracion`. Para que funcione, las reglas publicadas tienen que incluir el bloque `match /configuracion/{id}` de `firestore.rules`.
+
 ## Funcionamiento continuo del kiosco (24/7)
 El módulo de asistencias está preparado para quedar abierto sin interrupciones:
 

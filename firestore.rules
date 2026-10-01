@@ -46,6 +46,12 @@ service cloud.firestore {
       allow write: if esAdmin();
     }
 
+    // Ajustes generales (por ejemplo, las frases motivadoras): el kiosco los lee, administración los cambia
+    match /configuracion/{id} {
+      allow read: if esAdmin() || esKiosco();
+      allow write: if esAdmin();
+    }
+
     // Entradas y salidas: el kiosco solo puede leer y crear; corregir o borrar es de administración
     match /fichajes/{id} {
       allow read: if esAdmin() || esKiosco();

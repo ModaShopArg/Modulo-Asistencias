@@ -50,6 +50,19 @@
         }
         .shake { animation: shake 0.4s ease-in-out; }
 
+        /* Frase motivadora: entra con un rebote y queda latiendo con un brillo para llamar la atención */
+        @keyframes fraseEntra {
+            0% { transform: scale(0.6) rotate(-3deg); opacity: 0; }
+            60% { transform: scale(1.06) rotate(1deg); opacity: 1; }
+            80% { transform: scale(0.98) rotate(0deg); }
+            100% { transform: scale(1); }
+        }
+        @keyframes fraseLate {
+            0%, 100% { transform: scale(1); box-shadow: 0 20px 50px -12px var(--brillo); }
+            50% { transform: scale(1.025); box-shadow: 0 24px 70px -6px var(--brillo); }
+        }
+        .frase-destacada { animation: fraseEntra 0.7s cubic-bezier(.2,.9,.3,1.3) 0.25s both, fraseLate 2.2s ease-in-out 1s infinite; }
+
         @keyframes popIn {
             from { transform: scale(0.8); opacity: 0; }
             to { transform: scale(1); opacity: 1; }
@@ -73,7 +86,7 @@
 
         const LARGO_PIN = 6;
         const INACTIVIDAD_PIN_MS = 30000;
-        const DURACION_CONFIRMACION_MS = 6000;
+        const DURACION_CONFIRMACION_MS = 9000; // con tiempo para leer la frase motivadora
         const MARCA_DUPLICADA_MS = 2 * 60 * 1000;
         const TIEMPO_MAX_REGISTRO_MS = 15000;
         const VENTANA_FICHAJES_MS = 24 * 60 * 60 * 1000;
@@ -139,31 +152,34 @@
         );
 
         // ---------- Paso 1: elegir empleado ----------
+        // Para buscar sin importar mayúsculas ni tildes ("gomez" encuentra "Gómez")
+        const normalizar = (texto) => texto.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+
         const ListaEmpleados = ({ empleados, fichajes, onElegir }) => {
             const [busqueda, setBusqueda] = useState('');
             const filtrados = empleados
-                .filter(e => e.nombre.toLowerCase().includes(busqueda.toLowerCase()))
+                .filter(e => normalizar(e.nombre).includes(normalizar(busqueda.trim())))
                 .sort((a, b) => a.nombre.localeCompare(b.nombre));
 
             return (
                 <div className="flex flex-col h-full">
-                    <div className="flex flex-wrap items-end justify-between gap-4 mb-6">
-                        <div>
-                            <h2 className="text-3xl font-black">¿Quién sos?</h2>
-                            <p className="text-slate-500 font-semibold">Tocá tu nombre para registrar tu entrada o salida.</p>
+                    <div className="flex justify-center mb-8">
+                        <div className="relative w-full max-w-2xl">
+                            <Icon name="search" className="w-6 h-6 absolute left-5 top-1/2 -translate-y-1/2 text-slate-400"/>
+                            <input
+                                value={busqueda}
+                                onChange={e => setBusqueda(e.target.value)}
+                                placeholder="Buscá tu nombre..."
+                                className="w-full bg-white border-2 border-slate-200 rounded-2xl pl-14 pr-12 py-4 text-lg font-semibold shadow-sm outline-none focus:border-brand-primary focus:ring-4 focus:ring-pink-100 transition-all"
+                            />
+                            {busqueda && (
+                                <button onClick={() => setBusqueda('')} className="absolute right-4 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-slate-100 text-slate-500 font-black hover:bg-slate-200" aria-label="Borrar búsqueda">×</button>
+                            )}
                         </div>
-                        {empleados.length > 8 && (
-                            <div className="relative w-full sm:w-72">
-                                <Icon name="search" className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-slate-400"/>
-                                <input
-                                    value={busqueda}
-                                    onChange={e => setBusqueda(e.target.value)}
-                                    placeholder="Buscar por nombre..."
-                                    className="w-full bg-white border border-slate-300 rounded-xl pl-12 pr-4 py-3 font-semibold outline-none focus:border-brand-primary focus:ring-2 focus:ring-pink-100"
-                                />
-                            </div>
-                        )}
                     </div>
+                    {empleados.length > 0 && filtrados.length === 0 && (
+                        <p className="text-center text-slate-500 font-semibold py-10">No se encontró ningún empleado con "{busqueda.trim()}".</p>
+                    )}
 
                     {empleados.length === 0 ? (
                         <div className="flex-1 flex flex-col items-center justify-center text-center text-slate-500 border-2 border-dashed border-slate-300 bg-white rounded-3xl p-10">
@@ -397,13 +413,22 @@
             const nombre = fichaje.empleadoNombre.split(' ')[0];
             return (
                 <div onClick={onFin} className="flex flex-col items-center justify-center text-center h-full pop-in cursor-pointer">
-                    <div className={`w-32 h-32 rounded-full flex items-center justify-center mb-8 text-white shadow-2xl ${esEntrada ? 'bg-emerald-600 shadow-emerald-600/30' : 'bg-brand-primary shadow-brand-primary/30'}`}>
-                        <Icon name="check" className="w-20 h-20"/>
+                    <div className={`w-24 h-24 rounded-full flex items-center justify-center mb-5 text-white shadow-2xl ${esEntrada ? 'bg-emerald-600 shadow-emerald-600/30' : 'bg-brand-primary shadow-brand-primary/30'}`}>
+                        <Icon name="check" className="w-14 h-14"/>
                     </div>
                     <p className={`text-xl font-bold uppercase tracking-widest mb-2 ${esEntrada ? 'text-emerald-600' : 'text-brand-primary'}`}>{esEntrada ? 'Entrada registrada' : 'Salida registrada'}</p>
-                    <h2 className="text-5xl md:text-6xl font-black mb-4">{esEntrada ? `¡Buen turno, ${nombre}!` : `¡Hasta luego, ${nombre}!`}</h2>
-                    <p className="text-7xl font-black tabular text-brand-negro">{fichaje.hora.slice(0, 5)}<span className="text-3xl text-slate-400 ml-2">{fichaje.hora.slice(6)}</span></p>
-                    <p className="text-slate-500 font-semibold mt-2">{Datos.fechaCorta(fichaje.fecha)}</p>
+                    <h2 className="text-5xl md:text-6xl font-black mb-3">{esEntrada ? `¡Buen turno, ${nombre}!` : `¡Hasta luego, ${nombre}!`}</h2>
+                    <p className="text-6xl font-black tabular text-brand-negro">{fichaje.hora.slice(0, 5)}<span className="text-3xl text-slate-400 ml-2">{fichaje.hora.slice(6)}</span></p>
+                    <p className="text-slate-500 font-semibold mt-1">{Datos.fechaCorta(fichaje.fecha)}</p>
+                    {fichaje.frase && (
+                        <div
+                            className={`frase-destacada relative w-full max-w-3xl mt-8 px-10 py-7 rounded-3xl text-white ${esEntrada ? 'bg-gradient-to-br from-emerald-500 to-emerald-700' : 'bg-gradient-to-br from-brand-primary to-pink-700'}`}
+                            style={{ '--brillo': esEntrada ? 'rgba(5,150,105,0.55)' : 'rgba(233,0,137,0.55)' }}
+                        >
+                            <span className="absolute -top-4 left-5 text-8xl leading-none font-black text-white/30 select-none">“</span>
+                            <p className="relative text-2xl md:text-3xl font-black leading-snug">{fichaje.frase}</p>
+                        </div>
+                    )}
                     <div className="w-64 h-1.5 bg-slate-200 rounded-full mt-10 overflow-hidden">
                         <div className={`h-full ${esEntrada ? 'bg-emerald-500' : 'bg-brand-primary'}`} style={{ animation: `progreso ${DURACION_CONFIRMACION_MS}ms linear forwards` }}></div>
                     </div>
@@ -729,8 +754,26 @@
                 setPaso('pin');
             };
 
+            // Frases motivadoras (se cargan desde Configuración del sistema interno). Si no se
+            // pueden leer, se usan las predeterminadas: nunca bloquean el fichaje.
+            const frasesRef = useRef(Datos.FRASES_PREDETERMINADAS);
+            const ultimaFrase = useRef('');
+            useEffect(() => {
+                if (!usuario) return;
+                return Datos.escucharFrases(f => { frasesRef.current = f; }, err => console.warn('Frases motivadoras:', err.code || err));
+            }, [usuario, reintento]);
+
+            const elegirFrase = (tipo, nombreCompleto) => {
+                const lista = frasesRef.current[tipo] || [];
+                if (lista.length === 0) return '';
+                const opciones = lista.length > 1 ? lista.filter(f => f !== ultimaFrase.current) : lista; // no repetir la anterior
+                const frase = opciones[Math.floor(Math.random() * opciones.length)];
+                ultimaFrase.current = frase;
+                return frase.replace(/\{nombre\}/gi, nombreCompleto.split(' ')[0]);
+            };
+
             const registrado = useCallback((fichaje) => {
-                setUltimoRegistro(fichaje);
+                setUltimoRegistro({ ...fichaje, frase: elegirFrase(fichaje.tipo, fichaje.empleadoNombre) });
                 setPaso('ok');
             }, []);
 

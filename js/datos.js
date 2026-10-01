@@ -414,6 +414,46 @@ const rangoEnMs = (desde, hasta) => ({
     hasta: timestampDesdeAR(hasta, '23:59:59') + 999
 });
 
+// ---------- Frases motivadoras ----------
+// Se muestran en el kiosco al fichar. Se cargan desde Configuración del sistema interno
+// y se guardan en configuracion/frases. "{nombre}" se reemplaza por el nombre del empleado.
+
+const FRASES_PREDETERMINADAS = {
+    entrada: [
+        '¡Hoy es un gran día para dar lo mejor de vos, {nombre}!',
+        'Tu actitud hace la diferencia. ¡A brillar!',
+        'Cada cliente que atendés se lleva algo de tu energía. ¡Que sea de la buena!',
+        'Hoy es una nueva oportunidad para superarte.',
+        'Cada pequeño esfuerzo de hoy suma para el gran resultado de mañana.',
+        '¡Arrancamos con todo, {nombre}! El equipo cuenta con vos.'
+    ],
+    salida: [
+        '¡Gracias por tu esfuerzo de hoy, {nombre}! Descansá, te lo ganaste.',
+        'Un día más sumando. ¡Estamos orgullosos de tu trabajo!',
+        'Lo que hiciste hoy construye lo que logramos mañana. ¡Gracias!',
+        'Desconectá, disfrutá y recargá energías. ¡Hasta la próxima!',
+        'Tu dedicación se nota. ¡Buen descanso, {nombre}!'
+    ]
+};
+
+const limpiarFrases = (lista) => (Array.isArray(lista) ? lista : []).map(f => String(f).trim()).filter(Boolean);
+
+// callback({ entrada, salida, personalizadas }): si todavía no se cargaron frases, usa las predeterminadas
+const escucharFrases = (callback, onError) =>
+    onSnapshot(doc(db, 'configuracion', 'frases'), snap => {
+        const d = snap.exists() ? snap.data() : null;
+        callback({
+            entrada: d ? limpiarFrases(d.entrada) : FRASES_PREDETERMINADAS.entrada,
+            salida: d ? limpiarFrases(d.salida) : FRASES_PREDETERMINADAS.salida,
+            personalizadas: !!d
+        });
+    }, onError);
+
+const guardarFrases = ({ entrada, salida }) =>
+    setDoc(doc(db, 'configuracion', 'frases'), { entrada: limpiarFrases(entrada), salida: limpiarFrases(salida) });
+
+const restaurarFrases = () => deleteDoc(doc(db, 'configuracion', 'frases'));
+
 // ---------- Respaldo ----------
 
 // Sube un respaldo .json (también acepta los exportados por el sistema anterior).
@@ -478,6 +518,10 @@ window.Datos = {
     calcularJornadas,
     rangoDePeriodo,
     rangoEnMs,
+    FRASES_PREDETERMINADAS,
+    escucharFrases,
+    guardarFrases,
+    restaurarFrases,
     importarRespaldo,
     esPinValido,
     hashPin,

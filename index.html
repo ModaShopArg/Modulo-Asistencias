@@ -1997,6 +1997,109 @@
             );
         };
 
+        // Frases que el Módulo de Asistencias muestra al fichar la entrada y la salida
+        const FrasesMotivadoras = ({ showToast }) => {
+            const [frases, setFrases] = useState(null);
+            const [nuevas, setNuevas] = useState({ entrada: '', salida: '' });
+            const [errorLectura, setErrorLectura] = useState('');
+            const [confirmarRestaurar, setConfirmarRestaurar] = useState(false);
+
+            useEffect(() => Datos.escucharFrases(
+                f => { setFrases(f); setErrorLectura(''); },
+                err => setErrorLectura(err.code === 'permission-denied'
+                    ? 'Para usar esta sección, publicá en Firebase las reglas actualizadas del archivo firestore.rules (Firestore Database → Reglas).'
+                    : Datos.errorAmigable(err))
+            ), []);
+
+            const guardar = async (cambios, mensaje) => {
+                try {
+                    await Datos.guardarFrases({ entrada: frases.entrada, salida: frases.salida, ...cambios });
+                    showToast(mensaje);
+                } catch (err) {
+                    showToast('No se pudieron guardar las frases: ' + Datos.errorAmigable(err), 'error');
+                }
+            };
+
+            const agregar = (tipo) => (e) => {
+                e.preventDefault();
+                const texto = nuevas[tipo].trim();
+                if (!texto) return;
+                guardar({ [tipo]: [...frases[tipo], texto] }, 'Frase agregada.');
+                setNuevas({ ...nuevas, [tipo]: '' });
+            };
+
+            const quitar = (tipo, indice) => guardar({ [tipo]: frases[tipo].filter((_, i) => i !== indice) }, 'Frase eliminada.');
+
+            const restaurar = async () => {
+                setConfirmarRestaurar(false);
+                try {
+                    await Datos.restaurarFrases();
+                    showToast('Se restauraron las frases predeterminadas.');
+                } catch (err) {
+                    showToast('No se pudieron restaurar: ' + Datos.errorAmigable(err), 'error');
+                }
+            };
+
+            const columnas = [
+                { tipo: 'entrada', titulo: 'Al fichar la entrada', color: 'text-emerald-700', borde: 'border-emerald-200', fondo: 'bg-emerald-50', boton: 'bg-emerald-600 hover:bg-emerald-700', ejemplo: 'Ej: ¡Arrancamos con todo, {nombre}!' },
+                { tipo: 'salida', titulo: 'Al fichar la salida', color: 'text-brand-primary', borde: 'border-pink-200', fondo: 'bg-pink-50', boton: 'bg-brand-primary hover:bg-opacity-90', ejemplo: 'Ej: ¡Gracias por tu esfuerzo, {nombre}!' }
+            ];
+
+            return (
+                <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-8 mt-8">
+                    <div className="flex flex-wrap justify-between items-start gap-4 mb-2">
+                        <h2 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
+                            <Icon name="award" className="text-brand-primary"/> Frases Motivadoras
+                        </h2>
+                        {frases && frases.personalizadas && (
+                            confirmarRestaurar ? (
+                                <div className="flex items-center gap-2 text-sm">
+                                    <span className="text-slate-500 font-semibold">¿Reemplazar todas por las predeterminadas?</span>
+                                    <button onClick={restaurar} className="px-3 py-1.5 rounded-lg bg-red-600 text-white font-bold">Sí</button>
+                                    <button onClick={() => setConfirmarRestaurar(false)} className="px-3 py-1.5 rounded-lg bg-slate-100 text-slate-600 font-bold">No</button>
+                                </div>
+                            ) : (
+                                <button onClick={() => setConfirmarRestaurar(true)} className="text-sm font-bold text-slate-500 hover:text-brand-primary">Restaurar predeterminadas</button>
+                            )
+                        )}
+                    </div>
+                    <p className="text-slate-500 mb-6">
+                        El Módulo de Asistencias muestra una al azar, bien destacada, cada vez que alguien ficha.
+                        Escribí <code className="bg-slate-100 text-brand-primary font-bold px-1.5 py-0.5 rounded">{'{nombre}'}</code> para incluir el nombre del empleado.
+                        {frases && !frases.personalizadas && ' Por ahora se usan las frases predeterminadas: al agregar o quitar una, pasan a ser tuyas.'}
+                    </p>
+
+                    {errorLectura && <p className="mb-6 text-sm font-bold text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-4">{errorLectura}</p>}
+
+                    {frases && (
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            {columnas.map(c => (
+                                <div key={c.tipo} className={`rounded-xl border ${c.borde} ${c.fondo} p-5 flex flex-col`}>
+                                    <h3 className={`font-black uppercase tracking-wider text-sm mb-3 ${c.color}`}>{c.titulo} ({frases[c.tipo].length})</h3>
+                                    <ul className="space-y-2 mb-4 flex-1">
+                                        {frases[c.tipo].map((f, i) => (
+                                            <li key={i} className="group bg-white rounded-lg border border-slate-200 px-3 py-2 flex items-start gap-2 text-sm text-slate-700">
+                                                <span className="flex-1">“{f}”</span>
+                                                <button onClick={() => quitar(c.tipo, i)} className="p-1 text-red-600 hover:bg-red-50 rounded opacity-40 group-hover:opacity-100 transition-opacity" title="Eliminar frase">
+                                                    <Icon name="trash" className="w-4 h-4"/>
+                                                </button>
+                                            </li>
+                                        ))}
+                                        {frases[c.tipo].length === 0 && <li className="text-sm text-slate-500 italic">Sin frases: al fichar no se muestra ninguna.</li>}
+                                    </ul>
+                                    <form onSubmit={agregar(c.tipo)} className="flex gap-2">
+                                        <input value={nuevas[c.tipo]} onChange={e => setNuevas({ ...nuevas, [c.tipo]: e.target.value })} maxLength={160} placeholder={c.ejemplo}
+                                            className="flex-1 min-w-0 border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white outline-none focus:ring-2 focus:ring-brand-primary" />
+                                        <button type="submit" className={`px-4 py-2 rounded-lg text-white font-bold text-sm transition-colors ${c.boton}`}>Agregar</button>
+                                    </form>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
         const Configuracion = ({ empleados, historial, showToast }) => {
             const handleExport = async () => {
                 let fichajes;
@@ -2081,6 +2184,8 @@
                             </div>
                         </div>
                     </div>
+
+                    <FrasesMotivadoras showToast={showToast} />
                 </div>
             );
         };
