@@ -1,0 +1,56 @@
+rules_version = '2';
+
+// Reglas de seguridad de Firestore para el Sistema de Sueldos + Módulo de Asistencias.
+// Pegar en: Consola de Firebase > Firestore Database > Reglas > Publicar.
+//
+// Los emails son los de las cuentas creadas en Firebase Authentication
+// (pueden ser varias, separadas por coma).
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function esAdmin() {
+      return request.auth != null
+        && request.auth.token.email in ['admin@modashop.com.ar'];
+    }
+
+    function esKiosco() {
+      return request.auth != null
+        && request.auth.token.email in ['asistencias@modashop.com.ar'];
+    }
+
+    // Un fichaje desde el kiosco: solo entrada/salida, de un empleado existente,
+    // y con la hora del servidor (no se puede cargar una hora inventada).
+    function fichajeDeKioscoValido() {
+      let d = request.resource.data;
+      return d.keys().hasOnly(['empleadoId', 'empleadoNombre', 'tipo', 'timestamp', 'origen', 'nota'])
+        && d.tipo in ['entrada', 'salida']
+        && d.empleadoId is int
+        && d.origen == 'kiosco'
+        && d.timestamp == request.time
+        && exists(/databases/$(database)/documents/empleadosKiosco/$(string(d.empleadoId)));
+    }
+
+    // Ficha completa con sueldos: solo administración
+    match /empleados/{id} {
+      allow read, write: if esAdmin();
+    }
+
+    // Liquidaciones y recibos: solo administración
+    match /historial/{id} {
+      allow read, write: if esAdmin();
+    }
+
+    // Nombre, puesto y PIN (cifrado) que necesita el kiosco
+    match /empleadosKiosco/{id} {
+      allow read: if esAdmin() || esKiosco();
+      allow write: if esAdmin();
+    }
+
+    // Entradas y salidas: el kiosco solo puede leer y crear; corregir o borrar es de administración
+    match /fichajes/{id} {
+      allow read: if esAdmin() || esKiosco();
+      allow create: if esAdmin() || (esKiosco() && fichajeDeKioscoValido());
+      allow update, delete: if esAdmin();
+    }
+  }
+}

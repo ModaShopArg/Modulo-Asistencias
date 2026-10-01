@@ -1,0 +1,856 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Módulo de Asistencias - MODASHOP</title>
+    <link rel="icon" type="image/png" href="img/isologo-modashop.png">
+
+    <!-- Vigía: este equipo queda prendido siempre. Si la página no termina de cargar (por
+         ejemplo, se abrió o recargó sin internet), avisa en pantalla y se recarga sola
+         cuando vuelve la conexión. Va primero y sin dependencias para que funcione igual. -->
+    <script>
+        window.recargarCuandoHayaConexion = function (demoraMs) {
+            setTimeout(function intentar() {
+                fetch(location.href, { method: 'HEAD', cache: 'no-store' })
+                    .then(function (r) { if (r.ok) location.reload(); else setTimeout(intentar, 30000); })
+                    .catch(function () { setTimeout(intentar, 30000); });
+            }, demoraMs || 0);
+        };
+        setTimeout(function () {
+            var root = document.getElementById('root');
+            if (root && root.childElementCount > 0) return;
+            if (document.body) document.body.innerHTML = '<div style="font-family:sans-serif;min-height:100vh;display:flex;align-items:center;justify-content:center;text-align:center;color:#231F20;background:#F7F6F6;padding:24px"><div><p style="font-size:28px;font-weight:900;margin:0 0 8px">Sin conexión a internet</p><p style="color:#818486;font-size:18px;margin:0">El Módulo de Asistencias se va a abrir solo cuando vuelva la conexión.</p></div></div>';
+            window.recargarCuandoHayaConexion();
+        }, 30000);
+    </script>
+
+    <!-- Versiones fijas: una versión nueva publicada en el CDN no puede romper el kiosco -->
+    <script crossorigin src="https://unpkg.com/react@17.0.2/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@17.0.2/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone@7.29.9/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800;900&display=swap" rel="stylesheet">
+
+    <!-- Firebase + datos compartidos con el tablero interno (index.html) -->
+    <script src="js/firebase-config.js"></script>
+    <script type="module" src="js/datos.js"></script>
+
+    <!-- Paleta y tipografía del Manual de Marca -->
+    <script src="js/marca.js"></script>
+
+    <style>
+        @keyframes shake {
+            0%, 100% { transform: translateX(0); }
+            20%, 60% { transform: translateX(-10px); }
+            40%, 80% { transform: translateX(10px); }
+        }
+        .shake { animation: shake 0.4s ease-in-out; }
+
+        @keyframes popIn {
+            from { transform: scale(0.8); opacity: 0; }
+            to { transform: scale(1); opacity: 1; }
+        }
+        .pop-in { animation: popIn 0.25s ease-out forwards; }
+
+        @keyframes progreso {
+            from { width: 100%; }
+            to { width: 0%; }
+        }
+
+        body { -webkit-tap-highlight-color: transparent; user-select: none; }
+        .tabular { font-variant-numeric: tabular-nums; }
+    </style>
+</head>
+<body class="bg-slate-50 text-brand-negro font-sans antialiased min-h-screen">
+    <div id="root" class="min-h-screen w-full"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useMemo, useRef, useCallback } = React;
+
+        const LARGO_PIN = 6;
+        const INACTIVIDAD_PIN_MS = 30000;
+        const DURACION_CONFIRMACION_MS = 6000;
+        const MARCA_DUPLICADA_MS = 2 * 60 * 1000;
+        const TIEMPO_MAX_REGISTRO_MS = 15000;
+        const VENTANA_FICHAJES_MS = 24 * 60 * 60 * 1000;
+        const REINTENTO_CONEXION_MS = 30000;
+        const HORA_REINICIO_DIARIO = '04'; // recarga diaria (hora argentina) para liberar memoria y tomar actualizaciones
+        // Salvapantallas después de 10 minutos sin uso. Para probarlo más rápido: asistencias.html?reposo=15 (segundos)
+        const REPOSO_MS = (parseInt(new URLSearchParams(location.search).get('reposo')) || 10 * 60) * 1000;
+        const COLORES_REPOSO = ['#E90089', '#FFFFFF', '#FF80CF', '#00C2FF', '#FFD400', '#7CE38B', '#B07CFF', '#FF7A45'];
+        const VELOCIDAD_REPOSO = 140; // píxeles por segundo
+
+        const Icon = ({ name, className = "w-5 h-5" }) => {
+            const icons = {
+                'arrow-left': <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path></svg>,
+                'backspace': <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2M3 12l6.414 6.414a2 2 0 001.414.586H19a2 2 0 002-2V7a2 2 0 00-2-2h-8.172a2 2 0 00-1.414.586L3 12z"></path></svg>,
+                'check': <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7"></path></svg>,
+                'lock': <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path></svg>,
+                'search': <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>,
+                'login': <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M11 16l-4-4m0 0l4-4m-4 4h14m-5 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h7a3 3 0 013 3v1"></path></svg>,
+                'logout': <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"></path></svg>,
+                'panel': <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 5a1 1 0 011-1h14a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM4 13a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H5a1 1 0 01-1-1v-6zM16 13a1 1 0 011-1h2a1 1 0 011 1v6a1 1 0 01-1 1h-2a1 1 0 01-1-1v-6z"></path></svg>,
+                'alert': <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
+            };
+            return icons[name] || <svg className={className}></svg>;
+        };
+
+        // Tiempo transcurrido desde una marca, calculado con la hora guardada en Firebase:
+        // sigue siendo correcto aunque el equipo se haya quedado sin internet o se haya reiniciado.
+        const tiempoDesde = (fichaje) => Datos.formatearHoras(Math.max(0, Datos.ahora() - fichaje.timestamp) / 3600000);
+
+        const iniciales = (nombre) => nombre.split(' ').filter(Boolean).slice(0, 2).map(p => p[0]).join('').toUpperCase();
+
+        const Logo = ({ className = 'h-12' }) => {
+            const [error, setError] = useState(false);
+            if (error) return <span className="font-black text-3xl tracking-tight text-brand-negro">MODA<span className="text-brand-primary">SHOP</span></span>;
+            return <img src="img/logo-modashop.png" alt="MODASHOP" className={`${className} w-auto object-contain shrink-0`} onError={() => setError(true)} />;
+        };
+
+        const Reloj = () => {
+            const [ahora, setAhora] = useState(new Date(Datos.ahora()));
+            useEffect(() => {
+                const t = setInterval(() => setAhora(new Date(Datos.ahora())), 1000);
+                return () => clearInterval(t);
+            }, []);
+            const { hora } = Datos.partesAR(ahora);
+            return (
+                <div className="text-right">
+                    <div className="text-5xl md:text-6xl font-black tabular tracking-tight leading-none">
+                        {hora.slice(0, 5)}<span className="text-brand-primary text-3xl md:text-4xl align-top ml-1">{hora.slice(6)}</span>
+                    </div>
+                    <p className="text-slate-600 font-semibold mt-1">{Datos.fechaLarga(ahora)}</p>
+                    <p className="text-[11px] text-slate-500 uppercase tracking-widest">Hora oficial Argentina · GMT-3</p>
+                </div>
+            );
+        };
+
+        const Avatar = ({ nombre, presente, grande = false }) => (
+            <div className={`relative rounded-2xl bg-gradient-to-br from-brand-primary to-pink-700 text-white flex items-center justify-center font-black shadow-md shadow-brand-primary/20 shrink-0 ${grande ? 'w-24 h-24 text-4xl' : 'w-16 h-16 text-2xl'}`}>
+                {iniciales(nombre)}
+                {presente !== undefined && (
+                    <span className={`absolute -bottom-1 -right-1 w-5 h-5 rounded-full border-4 border-white ${presente ? 'bg-emerald-500' : 'bg-slate-400'}`}></span>
+                )}
+            </div>
+        );
+
+        // ---------- Paso 1: elegir empleado ----------
+        const ListaEmpleados = ({ empleados, fichajes, onElegir }) => {
+            const [busqueda, setBusqueda] = useState('');
+            const filtrados = empleados
+                .filter(e => e.nombre.toLowerCase().includes(busqueda.toLowerCase()))
+                .sort((a, b) => a.nombre.localeCompare(b.nombre));
+
+            return (
+                <div className="flex flex-col h-full">
+                    <div className="flex flex-wrap items-end justify-between gap-4 mb-6">
+                        <div>
+                            <h2 className="text-3xl font-black">¿Quién sos?</h2>
+                            <p className="text-slate-500 font-semibold">Tocá tu nombre para registrar tu entrada o salida.</p>
+                        </div>
+                        {empleados.length > 8 && (
+                            <div className="relative w-full sm:w-72">
+                                <Icon name="search" className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-slate-400"/>
+                                <input
+                                    value={busqueda}
+                                    onChange={e => setBusqueda(e.target.value)}
+                                    placeholder="Buscar por nombre..."
+                                    className="w-full bg-white border border-slate-300 rounded-xl pl-12 pr-4 py-3 font-semibold outline-none focus:border-brand-primary focus:ring-2 focus:ring-pink-100"
+                                />
+                            </div>
+                        )}
+                    </div>
+
+                    {empleados.length === 0 ? (
+                        <div className="flex-1 flex flex-col items-center justify-center text-center text-slate-500 border-2 border-dashed border-slate-300 bg-white rounded-3xl p-10">
+                            <p className="text-xl font-bold">No hay empleados cargados.</p>
+                            <p>Cargalos desde el tablero interno, en la sección Directorio.</p>
+                        </div>
+                    ) : (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 content-start">
+                            {filtrados.map(emp => {
+                                const presente = Datos.estaPresente(emp.id, fichajes);
+                                const ultimo = Datos.ultimoFichaje(emp.id, fichajes);
+                                const sinPin = !emp.pinHash;
+                                return (
+                                    <button
+                                        key={emp.id}
+                                        disabled={sinPin}
+                                        onClick={() => onElegir(emp)}
+                                        className={`text-left bg-white border-2 rounded-2xl p-5 flex items-center gap-4 shadow-sm transition-all ${sinPin ? 'opacity-50 cursor-not-allowed border-slate-200' : 'border-slate-200 hover:border-brand-primary hover:shadow-md active:scale-[0.97]'}`}
+                                    >
+                                        <Avatar nombre={emp.nombre} presente={sinPin ? undefined : presente} />
+                                        <div className="min-w-0">
+                                            <p className="font-black text-lg leading-tight truncate">{emp.nombre}</p>
+                                            <p className="text-slate-500 text-sm truncate">{emp.puesto || 'Sin puesto'}</p>
+                                            {sinPin ? (
+                                                <p className="text-amber-600 text-xs font-bold mt-1 flex items-center gap-1"><Icon name="lock" className="w-3 h-3"/> Sin PIN asignado</p>
+                                            ) : presente ? (
+                                                <p className="text-emerald-600 text-xs font-bold mt-1">Trabajando · desde {ultimo.hora.slice(0, 5)} · {tiempoDesde(ultimo)}</p>
+                                            ) : (
+                                                <p className="text-slate-400 text-xs font-bold mt-1">Fuera de turno</p>
+                                            )}
+                                        </div>
+                                    </button>
+                                );
+                            })}
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
+        // ---------- Paso 2: ingresar PIN ----------
+        const IngresoPin = ({ empleado, fichajes, onVolver, onRegistrado }) => {
+            const [pin, setPin] = useState('');
+            const [tipo, setTipo] = useState(() => Datos.proximoTipo(empleado.id, fichajes));
+            const [error, setError] = useState('');
+            const [shake, setShake] = useState(false);
+            const ultimaActividad = useRef(Date.now());
+            const presente = Datos.estaPresente(empleado.id, fichajes);
+            const ultimo = Datos.ultimoFichaje(empleado.id, fichajes);
+
+            const registrarActividad = () => { ultimaActividad.current = Date.now(); };
+
+            // Vuelve solo a la lista si nadie toca nada
+            useEffect(() => {
+                const t = setInterval(() => {
+                    if (Date.now() - ultimaActividad.current > INACTIVIDAD_PIN_MS) onVolver();
+                }, 1000);
+                return () => clearInterval(t);
+            }, [onVolver]);
+
+            const mostrarError = (mensaje) => {
+                setError(mensaje);
+                setShake(true);
+                setPin('');
+                setTimeout(() => setShake(false), 400);
+            };
+
+            const [registrando, setRegistrando] = useState(false);
+
+            const confirmar = useCallback(async (pinCompleto) => {
+                const res = Datos.verificarPin(empleado, pinCompleto);
+                if (!res.ok) {
+                    if (res.motivo === 'bloqueado') {
+                        const min = Math.max(1, Math.ceil((res.bloqueadoHasta - Date.now()) / 60000));
+                        mostrarError(`Demasiados intentos fallidos. Probá de nuevo en ${min} minuto${min > 1 ? 's' : ''}.`);
+                    } else if (res.motivo === 'incorrecto') {
+                        mostrarError(`PIN incorrecto. Te quedan ${res.intentosRestantes} intento${res.intentosRestantes > 1 ? 's' : ''}.`);
+                    } else {
+                        mostrarError('No tenés un PIN asignado. Consultá con administración.');
+                    }
+                    return;
+                }
+
+                const previo = Datos.ultimoFichaje(empleado.id, fichajes);
+                if (previo && Datos.ahora() - previo.timestamp < MARCA_DUPLICADA_MS) {
+                    mostrarError(`Ya registraste tu ${previo.tipo} a las ${previo.hora.slice(0, 5)}. Si fue un error, avisá a tu encargado/a.`);
+                    return;
+                }
+
+                // La hora la pone el servidor de Firebase; se espera su confirmación
+                setRegistrando(true);
+                try {
+                    await Promise.race([
+                        Datos.registrarFichaje({ empleadoId: empleado.id, empleadoNombre: empleado.nombre, tipo, origen: 'kiosco' }),
+                        new Promise((_, rechazar) => setTimeout(() => rechazar({ code: 'tiempo-agotado' }), TIEMPO_MAX_REGISTRO_MS))
+                    ]);
+                    const { fecha, hora } = Datos.partesAR();
+                    onRegistrado({ empleadoNombre: empleado.nombre, tipo, fecha, hora });
+                } catch (err) {
+                    console.error(err);
+                    setRegistrando(false);
+                    if (err.code === 'tiempo-agotado') {
+                        mostrarError('La conexión está lenta y no se pudo confirmar la marca. Fijate en "Últimas marcas de hoy" si figura; si no, probá de nuevo.');
+                    } else if (err.code === 'unavailable' || !navigator.onLine) {
+                        mostrarError('Sin conexión a internet: la marca NO se registró. Probá de nuevo en unos minutos o avisá a tu encargado/a.');
+                    } else {
+                        mostrarError('No se pudo registrar: ' + Datos.errorAmigable(err));
+                    }
+                }
+            }, [empleado, tipo, fichajes, onRegistrado]);
+
+            // Al completar los 6 dígitos se valida solo, sin apretar Enter.
+            // Se usa una ref para que un cambio en los fichajes (llegan en vivo) no repita el envío.
+            const confirmarRef = useRef(confirmar);
+            confirmarRef.current = confirmar;
+            useEffect(() => {
+                if (pin.length !== LARGO_PIN) return;
+                const t = setTimeout(() => confirmarRef.current(pin), 120);
+                return () => clearTimeout(t);
+            }, [pin]);
+
+            const registrandoRef = useRef(false);
+            registrandoRef.current = registrando;
+
+            const agregarDigito = useCallback((d) => {
+                if (registrandoRef.current) return;
+                registrarActividad();
+                setError('');
+                setPin(prev => prev.length >= LARGO_PIN ? prev : prev + d);
+            }, []);
+
+            const borrar = () => { if (registrandoRef.current) return; registrarActividad(); setPin(prev => prev.slice(0, -1)); };
+            const limpiar = () => { if (registrandoRef.current) return; registrarActividad(); setPin(''); };
+
+            // Teclado físico: números (fila superior o numérico), Backspace, Escape
+            useEffect(() => {
+                const onKey = (e) => {
+                    if (/^\d$/.test(e.key)) { e.preventDefault(); agregarDigito(e.key); }
+                    else if (e.key === 'Backspace') { e.preventDefault(); borrar(); }
+                    else if (e.key === 'Delete') { e.preventDefault(); limpiar(); }
+                    else if (e.key === 'Escape') { e.preventDefault(); onVolver(); }
+                    else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') { e.preventDefault(); registrarActividad(); setTipo(t => t === 'entrada' ? 'salida' : 'entrada'); }
+                };
+                window.addEventListener('keydown', onKey);
+                return () => window.removeEventListener('keydown', onKey);
+            }, [agregarDigito, onVolver]);
+
+            const teclas = ['1', '2', '3', '4', '5', '6', '7', '8', '9', 'limpiar', '0', 'borrar'];
+
+            return (
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 items-center max-w-5xl mx-auto w-full pop-in">
+                    <div className="flex flex-col gap-6">
+                        <button onClick={onVolver} className="self-start flex items-center gap-2 text-slate-500 hover:text-brand-primary font-bold transition-colors">
+                            <Icon name="arrow-left"/> Volver (Esc)
+                        </button>
+
+                        <div className="bg-white border border-slate-200 shadow-sm rounded-3xl p-6 flex items-center gap-5">
+                            <Avatar nombre={empleado.nombre} presente={presente} grande />
+                            <div className="min-w-0">
+                                <p className="text-slate-500 font-semibold">Hola,</p>
+                                <p className="text-3xl font-black leading-tight">{empleado.nombre}</p>
+                                <p className="text-sm text-slate-500 mt-1">
+                                    {ultimo ? `Última marca: ${ultimo.tipo} ${Datos.fechaCorta(ultimo.fecha)} ${ultimo.hora.slice(0, 5)}` : 'Sin marcas previas'}
+                                </p>
+                                {presente && <p className="text-sm font-bold text-emerald-600">Llevás {tiempoDesde(ultimo)} trabajando</p>}
+                            </div>
+                        </div>
+
+                        <div>
+                            <p className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-3">Voy a registrar mi</p>
+                            <div className="grid grid-cols-2 gap-3">
+                                {[['entrada', 'login', 'Entrada'], ['salida', 'logout', 'Salida']].map(([id, icono, label]) => (
+                                    <button
+                                        key={id}
+                                        onClick={() => { registrarActividad(); setTipo(id); }}
+                                        className={`flex items-center justify-center gap-3 py-5 rounded-2xl font-black text-xl uppercase tracking-wider border-2 transition-all ${tipo === id
+                                            ? (id === 'entrada' ? 'bg-emerald-600 border-emerald-600 text-white shadow-lg shadow-emerald-600/25' : 'bg-brand-primary border-brand-primary text-white shadow-lg shadow-brand-primary/25')
+                                            : 'bg-white border-slate-200 text-slate-400 hover:text-slate-600 hover:border-slate-300'}`}
+                                    >
+                                        <Icon name={icono} className="w-7 h-7"/> {label}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="bg-white border border-slate-200 shadow-sm rounded-3xl p-6 md:p-8">
+                        <p className="text-center font-bold text-slate-600 mb-5 flex items-center justify-center gap-2">
+                            <Icon name="lock" className="w-4 h-4"/> Ingresá tu PIN de 6 números
+                        </p>
+                        <div className={`flex justify-center gap-3 mb-4 ${shake ? 'shake' : ''}`}>
+                            {Array.from({ length: LARGO_PIN }).map((_, i) => (
+                                <div key={i} className={`w-11 h-14 rounded-xl border-2 flex items-center justify-center transition-all ${i < pin.length ? 'border-brand-primary bg-pink-50' : (i === pin.length ? 'border-slate-400' : 'border-slate-200')}`}>
+                                    {i < pin.length && <span className="w-3.5 h-3.5 rounded-full bg-brand-primary"></span>}
+                                </div>
+                            ))}
+                        </div>
+                        <div className="h-12 flex items-center justify-center mb-3">
+                            {registrando && <p className="text-center text-slate-500 font-bold text-sm animate-pulse">Registrando...</p>}
+                            {!registrando && error && <p className="text-center text-rose-600 font-bold text-sm flex items-center gap-2"><Icon name="alert" className="w-5 h-5 shrink-0"/>{error}</p>}
+                        </div>
+                        <div className="grid grid-cols-3 gap-3">
+                            {teclas.map(t => {
+                                if (t === 'limpiar') return (
+                                    <button key={t} onClick={limpiar} className="h-16 md:h-20 rounded-2xl bg-slate-100 text-slate-500 font-bold uppercase text-sm hover:bg-slate-200 active:scale-95 transition-all">Limpiar</button>
+                                );
+                                if (t === 'borrar') return (
+                                    <button key={t} onClick={borrar} className="h-16 md:h-20 rounded-2xl bg-slate-100 text-slate-600 flex items-center justify-center hover:bg-slate-200 active:scale-95 transition-all" aria-label="Borrar"><Icon name="backspace" className="w-8 h-8"/></button>
+                                );
+                                return (
+                                    <button key={t} onClick={() => agregarDigito(t)} className="h-16 md:h-20 rounded-2xl bg-white border-2 border-slate-200 text-brand-negro text-3xl font-black hover:border-brand-primary hover:text-brand-primary active:scale-95 active:bg-brand-primary active:text-white transition-all tabular">{t}</button>
+                                );
+                            })}
+                        </div>
+                        <p className="text-center text-xs text-slate-500 mt-5">También podés usar el teclado de la computadora.</p>
+                    </div>
+                </div>
+            );
+        };
+
+        // ---------- Paso 3: confirmación ----------
+        const Confirmacion = ({ fichaje, onFin }) => {
+            useEffect(() => {
+                const t = setTimeout(onFin, DURACION_CONFIRMACION_MS);
+                const onKey = () => onFin();
+                window.addEventListener('keydown', onKey);
+                return () => { clearTimeout(t); window.removeEventListener('keydown', onKey); };
+            }, [onFin]);
+
+            const esEntrada = fichaje.tipo === 'entrada';
+            const nombre = fichaje.empleadoNombre.split(' ')[0];
+            return (
+                <div onClick={onFin} className="flex flex-col items-center justify-center text-center h-full pop-in cursor-pointer">
+                    <div className={`w-32 h-32 rounded-full flex items-center justify-center mb-8 text-white shadow-2xl ${esEntrada ? 'bg-emerald-600 shadow-emerald-600/30' : 'bg-brand-primary shadow-brand-primary/30'}`}>
+                        <Icon name="check" className="w-20 h-20"/>
+                    </div>
+                    <p className={`text-xl font-bold uppercase tracking-widest mb-2 ${esEntrada ? 'text-emerald-600' : 'text-brand-primary'}`}>{esEntrada ? 'Entrada registrada' : 'Salida registrada'}</p>
+                    <h2 className="text-5xl md:text-6xl font-black mb-4">{esEntrada ? `¡Buen turno, ${nombre}!` : `¡Hasta luego, ${nombre}!`}</h2>
+                    <p className="text-7xl font-black tabular text-brand-negro">{fichaje.hora.slice(0, 5)}<span className="text-3xl text-slate-400 ml-2">{fichaje.hora.slice(6)}</span></p>
+                    <p className="text-slate-500 font-semibold mt-2">{Datos.fechaCorta(fichaje.fecha)}</p>
+                    <div className="w-64 h-1.5 bg-slate-200 rounded-full mt-10 overflow-hidden">
+                        <div className={`h-full ${esEntrada ? 'bg-emerald-500' : 'bg-brand-primary'}`} style={{ animation: `progreso ${DURACION_CONFIRMACION_MS}ms linear forwards` }}></div>
+                    </div>
+                    <p className="text-xs text-slate-500 mt-3">Tocá la pantalla o cualquier tecla para continuar</p>
+                </div>
+            );
+        };
+
+        const UltimosFichajes = ({ fichajes }) => {
+            const hoy = Datos.partesAR().fecha;
+            const recientes = fichajes.filter(f => f.fecha === hoy).sort((a, b) => b.timestamp - a.timestamp).slice(0, 6);
+            if (recientes.length === 0) return null;
+            return (
+                <div className="border-t border-slate-200 pt-4 mt-8">
+                    <p className="text-[11px] font-bold text-slate-500 uppercase tracking-widest mb-3">Últimas marcas de hoy</p>
+                    <div className="flex flex-wrap gap-2">
+                        {recientes.map(f => (
+                            <span key={f.id} className="bg-white border border-slate-200 rounded-full px-3 py-1.5 text-sm flex items-center gap-2">
+                                <span className={`w-2 h-2 rounded-full ${f.tipo === 'entrada' ? 'bg-emerald-500' : 'bg-brand-primary'}`}></span>
+                                <span className="font-bold">{f.empleadoNombre}</span>
+                                <span className="text-slate-500 tabular">{f.hora.slice(0, 5)}</span>
+                            </span>
+                        ))}
+                    </div>
+                </div>
+            );
+        };
+
+        // ---------- Salvapantallas ----------
+        // El logo rebota por los bordes como el de los reproductores de DVD y cambia de color en
+        // cada rebote. Se usa como máscara, así se puede pintar de cualquier color.
+        const Salvapantallas = () => {
+            const logoRef = useRef(null);
+
+            useEffect(() => {
+                const el = logoRef.current;
+                let x = Math.random() * Math.max(0, window.innerWidth - el.offsetWidth);
+                let y = Math.random() * Math.max(0, window.innerHeight - el.offsetHeight);
+                let dx = Math.random() < 0.5 ? 1 : -1;
+                let dy = Math.random() < 0.5 ? 1 : -1;
+                let color = 0;
+                let anterior = performance.now();
+                let cuadro;
+
+                const mover = (ahora) => {
+                    const dt = Math.min(0.05, (ahora - anterior) / 1000); // evita saltos si el navegador pausa la animación
+                    anterior = ahora;
+                    const maxX = Math.max(0, window.innerWidth - el.offsetWidth);
+                    const maxY = Math.max(0, window.innerHeight - el.offsetHeight);
+                    x += dx * VELOCIDAD_REPOSO * dt;
+                    y += dy * VELOCIDAD_REPOSO * dt;
+                    let rebote = false;
+                    if (x <= 0) { x = 0; dx = 1; rebote = true; }
+                    else if (x >= maxX) { x = maxX; dx = -1; rebote = true; }
+                    if (y <= 0) { y = 0; dy = 1; rebote = true; }
+                    else if (y >= maxY) { y = maxY; dy = -1; rebote = true; }
+                    if (rebote) {
+                        color = (color + 1) % COLORES_REPOSO.length;
+                        el.style.backgroundColor = COLORES_REPOSO[color];
+                    }
+                    el.style.transform = `translate(${x}px, ${y}px)`;
+                    cuadro = requestAnimationFrame(mover);
+                };
+                cuadro = requestAnimationFrame(mover);
+                return () => cancelAnimationFrame(cuadro);
+            }, []);
+
+            const mascara = 'url(img/logo-modashop.png) center / contain no-repeat';
+            return (
+                <div className="fixed inset-0 z-[100] bg-black overflow-hidden cursor-none">
+                    <div ref={logoRef} style={{
+                        position: 'absolute', left: 0, top: 0, willChange: 'transform',
+                        width: 'clamp(220px, 26vw, 420px)', aspectRatio: '1780 / 500',
+                        backgroundColor: COLORES_REPOSO[0],
+                        WebkitMask: mascara, mask: mascara
+                    }}></div>
+                </div>
+            );
+        };
+
+        const PantallaCentrada = ({ children }) => (
+            <div className="min-h-screen flex items-center justify-center p-6">
+                <div className="max-w-md w-full bg-white rounded-3xl p-8 shadow-xl border border-slate-200 border-t-4 border-t-brand-primary">{children}</div>
+            </div>
+        );
+
+        const FaltaConfiguracion = () => (
+            <PantallaCentrada>
+                <Icon name="alert" className="w-12 h-12 text-amber-500 mx-auto mb-4"/>
+                <h2 className="text-xl font-black text-center mb-2">Falta conectar Firebase</h2>
+                <p className="text-slate-500 text-center">Completá los datos del proyecto en <code className="text-brand-negro font-bold bg-slate-100 px-1.5 py-0.5 rounded">js/firebase-config.js</code>. Los pasos están en el README.</p>
+            </PantallaCentrada>
+        );
+
+        // Con la cuenta del kiosco se activa el equipo una sola vez (la sesión queda guardada).
+        // Con la cuenta de administración, App redirige al sistema interno.
+        const ConfigurarDispositivo = ({ errorExterno, onIntento }) => {
+            const [email, setEmail] = useState('');
+            const [password, setPassword] = useState('');
+            const [error, setError] = useState('');
+            const [cargando, setCargando] = useState(false);
+
+            const ingresar = async (e) => {
+                e.preventDefault();
+                setError('');
+                setCargando(true);
+                onIntento(true);
+                try {
+                    await Datos.iniciarSesion(email, password);
+                } catch (err) {
+                    onIntento(false);
+                    setError(Datos.errorAmigable(err));
+                    setCargando(false);
+                }
+            };
+
+            return (
+                <PantallaCentrada>
+                    <div className="flex justify-center mb-5">
+                        <Logo className="h-12" />
+                    </div>
+                    <div className="text-center mb-6">
+                        <h2 className="text-xl font-black leading-tight">Configurar este dispositivo</h2>
+                        <p className="text-slate-500 text-sm">Con la cuenta del kiosco se activa este equipo, una única vez. Con la de administración entrás al sistema interno.</p>
+                    </div>
+                    {(error || errorExterno) && (
+                        <div className="mb-4 p-3 bg-rose-50 border border-rose-200 text-rose-700 text-sm font-bold rounded-xl text-center">{error || errorExterno}</div>
+                    )}
+                    <form onSubmit={ingresar} className="space-y-4" style={{ userSelect: 'text' }}>
+                        <input type="email" required value={email} onChange={e => setEmail(e.target.value)} placeholder="Email" autoComplete="username"
+                            className="w-full bg-slate-50 border border-slate-300 rounded-xl px-4 py-3 font-semibold outline-none focus:bg-white focus:border-brand-primary focus:ring-2 focus:ring-pink-100" />
+                        <input type="password" required value={password} onChange={e => setPassword(e.target.value)} placeholder="Contraseña" autoComplete="current-password"
+                            className="w-full bg-slate-50 border border-slate-300 rounded-xl px-4 py-3 font-semibold outline-none focus:bg-white focus:border-brand-primary focus:ring-2 focus:ring-pink-100" />
+                        <button type="submit" disabled={cargando} className="w-full bg-brand-primary text-white font-black uppercase tracking-wider py-3 rounded-xl hover:bg-opacity-90 active:scale-95 transition-all disabled:opacity-60">
+                            {cargando ? 'Conectando...' : 'Ingresar'}
+                        </button>
+                    </form>
+                </PantallaCentrada>
+            );
+        };
+
+        const App = () => {
+            const [usuario, setUsuario] = useState(undefined); // undefined = verificando sesión
+            const [errorAcceso, setErrorAcceso] = useState('');
+            const [empleados, setEmpleados] = useState([]);
+            const [fichajes, setFichajes] = useState([]);
+            const [enLinea, setEnLinea] = useState(navigator.onLine);   // red del equipo
+            const [sincronizado, setSincronizado] = useState(true);     // Firebase respondiendo
+            const [errorDatos, setErrorDatos] = useState(null);         // 'permiso' | 'conexion' si se cortó la escucha en vivo
+            const [reintento, setReintento] = useState(0);
+            const timerReintento = useRef(null);
+            const [ventana, setVentana] = useState(0);
+            const [, setMinuto] = useState(0);
+            const [paso, setPaso] = useState('lista');
+            const [empleadoSel, setEmpleadoSel] = useState(null);
+            const [ultimoRegistro, setUltimoRegistro] = useState(null);
+            const [menuAdmin, setMenuAdmin] = useState(false);
+            const [esAdmin, setEsAdmin] = useState(null); // null = verificando
+            const ingresoManual = useRef(false);
+            const toquesLogo = useRef([]);
+
+            useEffect(() => Datos.escucharSesion(u => setUsuario(u)), []);
+
+            // Si se ingresa acá con la cuenta de administración, se va directo al sistema interno.
+            // Si la sesión de administración ya estaba abierta (vino desde el botón del sistema
+            // interno), se queda en el módulo y muestra el botón para volver.
+            useEffect(() => {
+                setEsAdmin(null);
+                if (!usuario) return;
+                let vigente = true;
+                Datos.esAdministrador().then(admin => {
+                    if (!vigente) return;
+                    if (admin && ingresoManual.current) {
+                        location.replace('index.html');
+                        return;
+                    }
+                    ingresoManual.current = false;
+                    setEsAdmin(admin);
+                });
+                return () => { vigente = false; };
+            }, [usuario]);
+
+            // Ajusta el reloj a la hora del servidor al abrir y cada hora
+            useEffect(() => {
+                Datos.sincronizarHora();
+                const t = setInterval(() => { Datos.sincronizarHora(); setVentana(v => v + 1); }, 60 * 60 * 1000);
+                return () => clearInterval(t);
+            }, []);
+
+            // Estado de la red del equipo
+            useEffect(() => {
+                const conRed = () => setEnLinea(true);
+                const sinRed = () => setEnLinea(false);
+                window.addEventListener('online', conRed);
+                window.addEventListener('offline', sinRed);
+                return () => { window.removeEventListener('online', conRed); window.removeEventListener('offline', sinRed); };
+            }, []);
+
+            // Una escucha de Firestore que falla queda cortada para siempre: se vuelve a abrir
+            // sola cada 30 segundos. La sesión no se cierra, para que el kiosco no quede
+            // desactivado por un error pasajero (se cierra desde el menú de administración).
+            const alFallar = useCallback((error) => {
+                console.error(error);
+                setErrorDatos(error.code === 'permission-denied' ? 'permiso' : 'conexion');
+                if (!timerReintento.current) {
+                    timerReintento.current = setTimeout(() => { timerReintento.current = null; setReintento(r => r + 1); }, REINTENTO_CONEXION_MS);
+                }
+            }, []);
+            useEffect(() => () => clearTimeout(timerReintento.current), []);
+
+            // Empleados (nombre, puesto y PIN) en vivo: los cambios del tablero interno llegan al instante
+            useEffect(() => {
+                if (!usuario) return;
+                return Datos.escucharEmpleadosKiosco((lista, conServidor) => {
+                    setEmpleados(lista);
+                    setSincronizado(conServidor);
+                    setErrorDatos(null);
+                }, alFallar);
+            }, [usuario, reintento, alFallar]);
+
+            // Marcas de las últimas 24 hs (la ventana se renueva cada hora)
+            useEffect(() => {
+                if (!usuario) return;
+                return Datos.escucharFichajes({ desde: Datos.ahora() - VENTANA_FICHAJES_MS }, lista => setFichajes(lista), alFallar);
+            }, [usuario, ventana, reintento, alFallar]);
+
+            // Cada minuto: refresca la pantalla (cambio de día, quién sigue trabajando) y, de
+            // madrugada, recarga la página una vez para liberar memoria y tomar actualizaciones.
+            // Solo recarga si nadie está fichando y el servidor responde.
+            const pasoRef = useRef(paso);
+            pasoRef.current = paso;
+            const abiertoDesde = useRef(Date.now());
+            const recargando = useRef(false);
+            useEffect(() => {
+                const t = setInterval(() => {
+                    setMinuto(m => m + 1);
+                    const { hora } = Datos.partesAR();
+                    const toca = hora.slice(0, 2) === HORA_REINICIO_DIARIO && Date.now() - abiertoDesde.current > 2 * 60 * 60 * 1000;
+                    if (!toca || recargando.current || pasoRef.current !== 'lista') return;
+                    recargando.current = true;
+                    fetch(location.href, { method: 'HEAD', cache: 'no-store' })
+                        .then(r => { if (r.ok && pasoRef.current === 'lista') location.reload(); else recargando.current = false; })
+                        .catch(() => { recargando.current = false; });
+                }, 60 * 1000);
+                return () => clearInterval(t);
+            }, []);
+
+            // Evita que la pantalla se apague o se bloquee mientras el módulo está abierto
+            useEffect(() => {
+                if (!('wakeLock' in navigator)) return;
+                let bloqueo = null;
+                const pedir = () => {
+                    if (document.visibilityState !== 'visible') return;
+                    navigator.wakeLock.request('screen').then(b => { bloqueo = b; }).catch(() => {});
+                };
+                pedir();
+                document.addEventListener('visibilitychange', pedir);
+                return () => {
+                    document.removeEventListener('visibilitychange', pedir);
+                    if (bloqueo) bloqueo.release().catch(() => {});
+                };
+            }, []);
+
+            // Salvapantallas: aparece tras REPOSO_MS sin uso y se va al mover el mouse,
+            // hacer clic, tocar la pantalla o apretar una tecla.
+            const [reposo, setReposo] = useState(false);
+            const reposoRef = useRef(false);
+            const menuAdminRef = useRef(menuAdmin);
+            menuAdminRef.current = menuAdmin;
+            const sesionRef = useRef(usuario);
+            sesionRef.current = usuario;
+            useEffect(() => {
+                let ultimaActividad = Date.now();
+                let ultimaPos = null;
+                let recorrido = 0; // movimiento acumulado del mouse durante el reposo
+
+                const dormir = (valor) => { reposoRef.current = valor; setReposo(valor); };
+                const actividad = () => {
+                    ultimaActividad = Date.now();
+                    if (reposoRef.current) dormir(false);
+                };
+                const alMover = (e) => {
+                    const pos = { x: e.clientX, y: e.clientY };
+                    const delta = ultimaPos ? Math.hypot(pos.x - ultimaPos.x, pos.y - ultimaPos.y) : 0;
+                    ultimaPos = pos;
+                    if (!reposoRef.current) { ultimaActividad = Date.now(); return; }
+                    // Ignora temblores mínimos del mouse y el evento que el navegador dispara
+                    // solo cuando aparece el salvapantallas debajo del cursor.
+                    recorrido += delta;
+                    if (recorrido > 12) actividad();
+                };
+                const alTeclear = (e) => {
+                    if (reposoRef.current) { e.preventDefault(); e.stopPropagation(); } // la tecla solo despierta
+                    actividad();
+                };
+
+                window.addEventListener('mousemove', alMover, true);
+                window.addEventListener('pointerdown', actividad, true);
+                window.addEventListener('touchstart', actividad, true);
+                window.addEventListener('wheel', actividad, true);
+                window.addEventListener('keydown', alTeclear, true);
+                const t = setInterval(() => {
+                    if (reposoRef.current || !sesionRef.current || menuAdminRef.current || pasoRef.current !== 'lista') return;
+                    if (Date.now() - ultimaActividad >= REPOSO_MS) { recorrido = 0; dormir(true); }
+                }, 1000);
+                return () => {
+                    clearInterval(t);
+                    window.removeEventListener('mousemove', alMover, true);
+                    window.removeEventListener('pointerdown', actividad, true);
+                    window.removeEventListener('touchstart', actividad, true);
+                    window.removeEventListener('wheel', actividad, true);
+                    window.removeEventListener('keydown', alTeclear, true);
+                };
+            }, []);
+
+            const volverALista = useCallback(() => {
+                setPaso('lista');
+                setEmpleadoSel(null);
+            }, []);
+
+            const elegir = (emp) => {
+                setEmpleadoSel(emp);
+                setPaso('pin');
+            };
+
+            const registrado = useCallback((fichaje) => {
+                setUltimoRegistro(fichaje);
+                setPaso('ok');
+            }, []);
+
+            // 5 toques seguidos en el logo abren el menú de administración del dispositivo
+            const tocarLogo = () => {
+                const ahora = Date.now();
+                toquesLogo.current = [...toquesLogo.current.filter(t => ahora - t < 3000), ahora];
+                if (toquesLogo.current.length >= 5) {
+                    toquesLogo.current = [];
+                    setMenuAdmin(true);
+                }
+            };
+
+            if (usuario === undefined || (usuario && esAdmin === null && ingresoManual.current)) {
+                return <div className="min-h-screen flex items-center justify-center text-slate-500 font-bold">Conectando...</div>;
+            }
+            if (!usuario) {
+                return <ConfigurarDispositivo errorExterno={errorAcceso} onIntento={v => { ingresoManual.current = v; }} />;
+            }
+
+            return (
+                <div className="min-h-screen flex flex-col">
+                    <header className="flex flex-wrap items-center justify-between gap-6 px-6 md:px-10 py-6 border-b-4 border-brand-primary bg-white shadow-sm">
+                        <div className="flex items-center gap-5" onClick={tocarLogo}>
+                            <Logo className="h-12 md:h-14" />
+                            <div className="leading-none border-l-2 border-slate-200 pl-5">
+                                <h1 className="text-base md:text-lg font-black tracking-widest text-slate-500 leading-tight">MÓDULO DE</h1>
+                                <h1 className="text-base md:text-lg font-black tracking-widest text-brand-primary leading-tight">ASISTENCIAS</h1>
+                            </div>
+                        </div>
+                        <div className="flex items-center gap-6">
+                            {esAdmin && (
+                                <a href="index.html" className="flex items-center gap-2 bg-white text-brand-primary border-2 border-brand-primary px-4 py-2.5 rounded-xl font-bold text-sm hover:bg-pink-50 transition-colors">
+                                    <Icon name="panel" className="w-4 h-4"/> Sistema interno
+                                </a>
+                            )}
+                            <Reloj />
+                        </div>
+                    </header>
+
+                    {errorDatos === 'permiso' ? (
+                        <div className="bg-rose-100 border-b border-rose-300 text-rose-900 font-bold text-center py-2 px-4 text-sm">
+                            Esta cuenta no tiene permiso para leer los datos. Se reintenta automáticamente; si sigue, avisá a administración.
+                        </div>
+                    ) : (!enLinea || !sincronizado || errorDatos) && (
+                        <div className="bg-amber-100 border-b border-amber-300 text-amber-900 font-bold text-center py-2 px-4 text-sm">
+                            Sin conexión a internet. Las marcas no se pueden registrar hasta que vuelva la conexión (se reconecta sola).
+                        </div>
+                    )}
+
+                    <main className="flex-1 flex flex-col px-6 md:px-10 py-8">
+                        {paso === 'lista' && (
+                            <>
+                                <div className="flex-1">
+                                    <ListaEmpleados empleados={empleados} fichajes={fichajes} onElegir={elegir} />
+                                </div>
+                                <UltimosFichajes fichajes={fichajes} />
+                            </>
+                        )}
+                        {paso === 'pin' && empleadoSel && (
+                            <div className="flex-1 flex items-center">
+                                <IngresoPin empleado={empleadoSel} fichajes={fichajes} onVolver={volverALista} onRegistrado={registrado} />
+                            </div>
+                        )}
+                        {paso === 'ok' && ultimoRegistro && (
+                            <div className="flex-1">
+                                <Confirmacion fichaje={ultimoRegistro} onFin={volverALista} />
+                            </div>
+                        )}
+                    </main>
+
+                    {reposo && <Salvapantallas />}
+
+                    {menuAdmin && (
+                        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-6 z-50">
+                            <div className="bg-white rounded-3xl p-8 max-w-sm w-full text-center shadow-2xl">
+                                <h3 className="text-xl font-black mb-2">Administración del dispositivo</h3>
+                                <p className="text-slate-500 text-sm mb-6">Conectado como <span className="text-brand-negro font-bold">{usuario.email}</span></p>
+                                <div className="grid grid-cols-2 gap-3">
+                                    <button onClick={() => setMenuAdmin(false)} className="py-3 rounded-xl bg-slate-100 text-slate-700 font-bold hover:bg-slate-200">Cancelar</button>
+                                    <button onClick={() => { setMenuAdmin(false); setErrorAcceso(''); Datos.cerrarSesion(); }} className="py-3 rounded-xl bg-brand-primary text-white font-bold hover:bg-opacity-90">Cerrar sesión</button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
+        // Si algo falla al dibujar la pantalla, React la dejaría en blanco: en su lugar se
+        // muestra un aviso y la página se recarga sola (cuando haya conexión).
+        class ProteccionErrores extends React.Component {
+            constructor(props) {
+                super(props);
+                this.state = { error: false };
+            }
+            componentDidCatch(error) {
+                console.error(error);
+                window.recargarCuandoHayaConexion(10000);
+            }
+            render() {
+                if (!this.state.error) return this.props.children;
+                return (
+                    <PantallaCentrada>
+                        <Icon name="alert" className="w-12 h-12 text-amber-500 mx-auto mb-4"/>
+                        <h2 className="text-xl font-black text-center mb-2">Reiniciando el módulo...</h2>
+                        <p className="text-slate-500 text-center">Ocurrió un error inesperado. En unos segundos vuelve a estar disponible.</p>
+                    </PantallaCentrada>
+                );
+            }
+        }
+        ProteccionErrores.getDerivedStateFromError = () => ({ error: true });
+
+        // js/datos.js es un módulo: puede terminar de cargar antes o después que este script
+        const iniciar = () => ReactDOM.render(
+            <ProteccionErrores>{Datos.configurado ? <App /> : <FaltaConfiguracion />}</ProteccionErrores>,
+            document.getElementById('root')
+        );
+        if (window.Datos) iniciar();
+        else window.addEventListener('datos-listo', iniciar, { once: true });
+    </script>
+</body>
+</html>
