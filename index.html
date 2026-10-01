@@ -159,11 +159,22 @@
                                     {cargando ? 'Ingresando...' : 'Iniciar Sesión'}
                                 </button>
                             </form>
+                            <div className="mt-6 text-center"><MarcaPSM /></div>
                         </div>
                     </div>
                 </div>
             );
         };
+
+        // Marca de agua del desarrollador
+        const MarcaPSM = () => (
+            <a href="https://psmsaas.pages.dev/" target="_blank" rel="noopener noreferrer" title="psmsaas.pages.dev"
+                className="inline-flex items-center gap-1.5 text-[11px] text-slate-400 opacity-70 hover:opacity-100 hover:text-slate-600 transition-opacity">
+                <span>Powered by:</span>
+                <img src="https://psmsaas.pages.dev/psm.png" alt="" className="h-4 w-4 object-contain" onError={e => { e.currentTarget.style.display = 'none'; }} />
+                <span className="font-bold">psmsaas</span>
+            </a>
+        );
 
         const ConfirmModal = ({ isOpen, message, onConfirm, onCancel }) => {
             if (!isOpen) return null;
@@ -1766,7 +1777,7 @@
                 const o = Datos.partesAR(new Date(f.timestampOriginal));
                 return `Corregida. Hora original: ${Datos.fechaCorta(o.fecha)} ${o.hora.slice(0, 5)}`;
             };
-            // ⚠ = el empleado la registró en el kiosco aceptando una advertencia (marca repetida, entrada sin salida, etc.)
+            // ⚠ = el empleado la registró en el Módulo de Asistencias aceptando una advertencia (marca repetida, entrada sin salida, etc.)
             const marcaOrigen = (f) => (
                 <>
                     {f.editado
@@ -2247,7 +2258,7 @@
                     if (error.code === 'permission-denied') {
                         if (sinPermiso) return; // fallan los dos listeners: se resuelve una sola vez
                         sinPermiso = true;
-                        // La cuenta del kiosco no puede ver sueldos: va directo al Módulo de Asistencias
+                        // La cuenta de asistencias no puede ver sueldos: va directo al Módulo de Asistencias
                         if (await Datos.puedeUsarKiosco()) {
                             location.replace('asistencias.html');
                             return;
@@ -2506,7 +2517,7 @@
                             ))}
                         </nav>
 
-                        {/* Acceso directo al Módulo de Asistencias (kiosco) */}
+                        {/* Acceso directo al Módulo de Asistencias */}
                         <div className="px-4 pb-4">
                             <a href="asistencias.html" className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl border-2 border-brand-primary text-brand-primary font-bold text-sm hover:bg-pink-50 transition-colors">
                                 <Icon name="clock" className="w-4 h-4"/> Módulo de Asistencias
@@ -2524,6 +2535,7 @@
                             <button onClick={() => { setErrorAcceso(''); Datos.cerrarSesion(); }} className="mt-2 w-full text-center text-xs font-semibold text-slate-500 hover:text-brand-primary transition-colors">
                                 Cerrar Sesión
                             </button>
+                            <div className="mt-3 text-center"><MarcaPSM /></div>
                         </div>
                     </div>
 

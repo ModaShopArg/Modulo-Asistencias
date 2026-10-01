@@ -25,7 +25,7 @@
         }, 30000);
     </script>
 
-    <!-- Versiones fijas: una versión nueva publicada en el CDN no puede romper el kiosco -->
+    <!-- Versiones fijas: una versión nueva publicada en el CDN no puede romper el sistema de asistencia -->
     <script crossorigin src="https://unpkg.com/react@17.0.2/umd/react.production.min.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@17.0.2/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone@7.29.9/babel.min.js"></script>
@@ -657,7 +657,7 @@
                     </div>
                     <div className="text-center mb-6">
                         <h2 className="text-xl font-black leading-tight">Configurar este dispositivo</h2>
-                        <p className="text-slate-500 text-sm">Con la cuenta del kiosco se activa este equipo, una única vez. Con la de administración entrás al sistema interno.</p>
+                        <p className="text-slate-500 text-sm">Con la cuenta de asistencias se activa este equipo, una única vez. Con la de administración entrás al sistema interno.</p>
                     </div>
                     {(error || errorExterno) && (
                         <div className="mb-4 p-3 bg-rose-50 border border-rose-200 text-rose-700 text-sm font-bold rounded-xl text-center">{error || errorExterno}</div>
@@ -671,9 +671,20 @@
                             {cargando ? 'Conectando...' : 'Ingresar'}
                         </button>
                     </form>
+                    <div className="mt-6 text-center"><MarcaPSM /></div>
                 </PantallaCentrada>
             );
         };
+
+        // Marca de agua del desarrollador. Se abre en otra pestaña para no salir del sistema de asistencia.
+        const MarcaPSM = () => (
+            <a href="https://psmsaas.pages.dev/" target="_blank" rel="noopener noreferrer" title="psmsaas.pages.dev"
+                className="inline-flex items-center gap-1.5 text-[11px] text-slate-400 opacity-70 hover:opacity-100 hover:text-slate-600 transition-opacity">
+                <span>Powered by:</span>
+                <img src="https://psmsaas.pages.dev/psm.png" alt="" className="h-4 w-4 object-contain" onError={e => { e.currentTarget.style.display = 'none'; }} />
+                <span className="font-bold">psmsaas</span>
+            </a>
+        );
 
         const App = () => {
             const [usuario, setUsuario] = useState(undefined); // undefined = verificando sesión
@@ -970,6 +981,8 @@
                             </div>
                         )}
                     </main>
+
+                    <footer className="pb-3 text-center"><MarcaPSM /></footer>
 
                     {reposo && <Salvapantallas />}
 
