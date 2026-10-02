@@ -18,15 +18,21 @@ service cloud.firestore {
         && request.auth.token.email in ['asistencias@modashop.com.ar'];
     }
 
-    // Un fichaje desde el kiosco: solo entrada/salida, de un empleado existente,
-    // y con la hora del servidor (no se puede cargar una hora inventada).
+    // Un fichaje desde el Módulo de Asistencias: solo entrada/salida, de un empleado existente.
+    // La hora es la del momento en que el empleado fichó: si no había internet, la marca se
+    // envía después, con `registradoEn` = hora del servidor al recibirla. No se acepta una hora
+    // futura ni una de más de 7 días atrás.
     function fichajeDeKioscoValido() {
       let d = request.resource.data;
-      return d.keys().hasOnly(['empleadoId', 'empleadoNombre', 'tipo', 'timestamp', 'origen', 'nota'])
+      return d.keys().hasOnly(['empleadoId', 'empleadoNombre', 'tipo', 'timestamp', 'origen', 'nota', 'registradoEn'])
         && d.tipo in ['entrada', 'salida']
         && d.empleadoId is int
         && d.origen == 'kiosco'
-        && d.timestamp == request.time
+        && d.timestamp is timestamp
+        && (d.timestamp == request.time
+            || (d.registradoEn == request.time
+                && d.timestamp <= request.time + duration.value(5, 'm')
+                && d.timestamp >= request.time - duration.value(7, 'd')))
         && exists(/databases/$(database)/documents/empleadosKiosco/$(string(d.empleadoId)));
     }
 
@@ -40,19 +46,19 @@ service cloud.firestore {
       allow read, write: if esAdmin();
     }
 
-    // Nombre, puesto y PIN (cifrado) que necesita el kiosco
+    // Nombre, puesto y PIN (cifrado) que necesita el Módulo de Asistencias
     match /empleadosKiosco/{id} {
       allow read: if esAdmin() || esKiosco();
       allow write: if esAdmin();
     }
 
-    // Ajustes generales (por ejemplo, las frases motivadoras): el kiosco los lee, administración los cambia
+    // Ajustes generales (por ejemplo, las frases motivadoras): el Módulo de Asistencias los lee, administración los cambia
     match /configuracion/{id} {
       allow read: if esAdmin() || esKiosco();
       allow write: if esAdmin();
     }
 
-    // Entradas y salidas: el kiosco solo puede leer y crear; corregir o borrar es de administración
+    // Entradas y salidas: la cuenta de asistencias solo puede leer y crear; corregir o borrar es de administración
     match /fichajes/{id} {
       allow read: if esAdmin() || esKiosco();
       allow create: if esAdmin() || (esKiosco() && fichajeDeKioscoValido());
