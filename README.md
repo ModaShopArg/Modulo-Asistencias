@@ -71,6 +71,14 @@ Recomendado: en **Authentication → Configuración → Acciones del usuario**, 
 - Si en la pantalla de ingreso del Módulo de Asistencias se entra con la cuenta de administración, se abre directamente el sistema interno.
 - Si en la pantalla de ingreso del sistema interno se entra con la cuenta de asistencias, se abre directamente el Módulo de Asistencias.
 
+## Cambiar la contraseña
+En el sistema interno, en **Config. y Respaldo → Cambiar contraseña**, se cambia la contraseña de la cuenta con la que estás conectado/a. Pide la contraseña actual y la nueva (mínimo 6 caracteres). Para cambiar la de la otra cuenta (administración o asistencias), iniciá sesión con esa cuenta y hacelo desde ahí. La contraseña la maneja Firebase: no queda escrita en el código ni en la base de datos.
+
+Si te la olvidaste, el mismo apartado tiene un botón para enviar un correo de restablecimiento (necesitás poder abrir el correo de esa cuenta). Para no quedar afuera si perdés el acceso, conviene tener una **segunda cuenta de administración** creada en Firebase Authentication y agregada a `esAdmin()` en `firestore.rules`.
+
+## Imprimir recibos sin el encabezado del navegador
+Los recibos y los informes se imprimen sin la línea de arriba (título) ni la de abajo (fecha y dirección web) que agrega el navegador. Si tu navegador igual las muestra, en el cuadro de impresión abrí **Más opciones** y desactivá **Encabezados y pies de página**.
+
 ## Marcas con advertencia
 El Módulo de Asistencias deja fichar entrada o salida en cualquier momento. En tres casos muestra primero una advertencia y pide confirmar:
 

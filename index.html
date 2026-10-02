@@ -44,7 +44,10 @@
                 width: 100%;
                 margin: 0;
             }
-            @page { margin: 1cm; size: portrait; }
+            /* margin 0 en la hoja: así el navegador no agrega su encabezado (título) ni su
+               pie (fecha, dirección web y número de página). El margen real lo da el padding. */
+            @page { margin: 0; size: portrait; }
+            #print-area { padding: 1cm; }
             table, tr, td { page-break-inside: avoid; }
         }
 
@@ -2147,6 +2150,74 @@
             );
         };
 
+        // Cambiar la contraseña de la cuenta conectada. La contraseña la maneja Firebase:
+        // no se escribe en el código ni se guarda en la base.
+        const CambiarPassword = ({ showToast }) => {
+            const email = Datos.emailActual();
+            const [actual, setActual] = useState('');
+            const [nueva, setNueva] = useState('');
+            const [repetir, setRepetir] = useState('');
+            const [guardando, setGuardando] = useState(false);
+
+            const guardar = async (e) => {
+                e.preventDefault();
+                if (nueva.length < 6) { showToast('La contraseña nueva tiene que tener al menos 6 caracteres.', 'error'); return; }
+                if (nueva !== repetir) { showToast('La contraseña nueva y su repetición no coinciden.', 'error'); return; }
+                setGuardando(true);
+                try {
+                    await Datos.cambiarPassword(actual, nueva);
+                    setActual(''); setNueva(''); setRepetir('');
+                    showToast('Contraseña cambiada. Usá la nueva la próxima vez que inicies sesión.', 'success');
+                } catch (err) {
+                    showToast('No se pudo cambiar: ' + Datos.errorAmigable(err), 'error');
+                } finally {
+                    setGuardando(false);
+                }
+            };
+
+            const resetear = async () => {
+                try {
+                    await Datos.enviarResetPassword(email);
+                    showToast(`Te enviamos un correo a ${email} para restablecer la contraseña.`, 'success');
+                } catch (err) {
+                    showToast('No se pudo enviar el correo: ' + Datos.errorAmigable(err), 'error');
+                }
+            };
+
+            return (
+                <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-8 mt-8">
+                    <h2 className="text-2xl font-bold text-slate-800 mb-2 flex items-center gap-2">
+                        <Icon name="settings" className="text-brand-primary"/> Cambiar contraseña
+                    </h2>
+                    <p className="text-slate-500 mb-6 text-sm">Cambia la contraseña de la cuenta con la que estás conectado/a: <span className="font-bold text-slate-700">{email}</span>. Para cambiar la del otro usuario (administración o asistencias), iniciá sesión con esa cuenta y hacelo desde acá.</p>
+                    <form onSubmit={guardar} className="space-y-4 max-w-md">
+                        <input type="email" value={email} readOnly autoComplete="username" className="hidden" />
+                        <div>
+                            <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1">Contraseña actual</label>
+                            <input type="password" value={actual} onChange={e => setActual(e.target.value)} required autoComplete="current-password"
+                                className="w-full px-4 py-3 rounded-xl border border-slate-300 bg-slate-50 focus:bg-white focus:ring-2 focus:ring-brand-primary outline-none transition-all font-semibold" placeholder="••••••••" />
+                        </div>
+                        <div>
+                            <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1">Contraseña nueva</label>
+                            <input type="password" value={nueva} onChange={e => setNueva(e.target.value)} required minLength={6} autoComplete="new-password"
+                                className="w-full px-4 py-3 rounded-xl border border-slate-300 bg-slate-50 focus:bg-white focus:ring-2 focus:ring-brand-primary outline-none transition-all font-semibold" placeholder="Al menos 6 caracteres" />
+                        </div>
+                        <div>
+                            <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1">Repetir contraseña nueva</label>
+                            <input type="password" value={repetir} onChange={e => setRepetir(e.target.value)} required autoComplete="new-password"
+                                className="w-full px-4 py-3 rounded-xl border border-slate-300 bg-slate-50 focus:bg-white focus:ring-2 focus:ring-brand-primary outline-none transition-all font-semibold" placeholder="••••••••" />
+                        </div>
+                        <button type="submit" disabled={guardando} className="bg-brand-primary text-white font-bold px-6 py-3 rounded-xl hover:bg-opacity-90 transition-all active:scale-95 disabled:opacity-60">
+                            {guardando ? 'Guardando...' : 'Cambiar contraseña'}
+                        </button>
+                    </form>
+                    <div className="mt-6 pt-6 border-t border-slate-200">
+                        <p className="text-sm text-slate-500">¿Te olvidaste la contraseña? <button onClick={resetear} className="font-bold text-brand-primary hover:underline">Enviame un correo para restablecerla</button> a {email}. (Necesitás poder abrir el correo de esa cuenta.)</p>
+                    </div>
+                </div>
+            );
+        };
+
         const Configuracion = ({ empleados, historial, showToast }) => {
             const handleExport = async () => {
                 let fichajes;
@@ -2231,6 +2302,8 @@
                             </div>
                         </div>
                     </div>
+
+                    <CambiarPassword showToast={showToast} />
 
                     <FrasesMotivadoras showToast={showToast} />
                 </div>

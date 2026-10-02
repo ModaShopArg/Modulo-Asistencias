@@ -10,7 +10,7 @@ service cloud.firestore {
 
     function esAdmin() {
       return request.auth != null
-        && request.auth.token.email in ['admin@modashop.com.ar'];
+        && request.auth.token.email in ['admin@modashop.com.ar', 'sudo@modashop.com.ar'];
     }
 
     function esKiosco() {

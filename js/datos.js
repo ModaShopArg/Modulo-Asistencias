@@ -9,7 +9,7 @@
 //
 // Los permisos se definen en firestore.rules.
 import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged, updatePassword, reauthenticateWithCredential, EmailAuthProvider, sendPasswordResetEmail } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
 import {
     getFirestore, collection, doc, setDoc, deleteDoc, updateDoc, addDoc, getDocs,
     onSnapshot, query, where, orderBy, limit, writeBatch, runTransaction, serverTimestamp, Timestamp
@@ -38,6 +38,22 @@ const escucharSesion = (callback) => onAuthStateChanged(auth, callback);
 const iniciarSesion = (email, password) => signInWithEmailAndPassword(auth, email.trim(), password);
 const cerrarSesion = () => signOut(auth);
 
+// Cambia la contraseña de la cuenta que está conectada en este momento. Se vuelve a pedir la
+// contraseña actual (Firebase lo exige si la sesión es vieja, y además confirma que quien la
+// cambia la conoce). La contraseña nunca se guarda en el código ni en la base: la maneja Firebase.
+const cambiarPassword = async (passwordActual, passwordNueva) => {
+    const u = auth && auth.currentUser;
+    if (!u) throw { code: 'sin-sesion' };
+    const cred = EmailAuthProvider.credential(u.email, passwordActual);
+    await reauthenticateWithCredential(u, cred);
+    await updatePassword(u, passwordNueva);
+};
+
+// Envía un correo para restablecer la contraseña de una cuenta (sirve si se la olvidaron).
+const enviarResetPassword = (email) => sendPasswordResetEmail(auth, email.trim());
+
+const emailActual = () => (auth && auth.currentUser && auth.currentUser.email) || '';
+
 // Las reglas solo dejan leer `empleados` a la cuenta de administración, así que
 // alcanza con intentar leer uno para saber qué cuenta está conectada.
 const esAdministrador = async () => {
@@ -65,6 +81,8 @@ const errorAmigable = (error) => {
     const codigo = (error && error.code) || '';
     if (['auth/invalid-credential', 'auth/wrong-password', 'auth/user-not-found', 'auth/invalid-email'].includes(codigo)) return 'Email o contraseña incorrectos.';
     if (codigo === 'auth/too-many-requests') return 'Demasiados intentos. Esperá unos minutos y probá de nuevo.';
+    if (codigo === 'auth/weak-password') return 'La contraseña nueva es muy corta: tiene que tener al menos 6 caracteres.';
+    if (codigo === 'auth/requires-recent-login') return 'Por seguridad, cerrá sesión, volvé a entrar y cambiala de nuevo.';
     if (codigo === 'auth/network-request-failed' || codigo === 'unavailable') return 'Sin conexión a internet.';
     if (codigo === 'permission-denied') return 'Esta cuenta no tiene permiso para esta acción.';
     return (error && error.message) || 'Error desconocido.';
@@ -588,6 +606,9 @@ window.Datos = {
     escucharSesion,
     iniciarSesion,
     cerrarSesion,
+    cambiarPassword,
+    enviarResetPassword,
+    emailActual,
     esAdministrador,
     puedeUsarKiosco,
     errorAmigable,
