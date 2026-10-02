@@ -5,7 +5,7 @@
 //   empleados/{id}        -> ficha completa con sueldos (solo administración)
 //   empleadosKiosco/{id}  -> nombre, puesto y hash del PIN (lo lee el kiosco)
 //   historial/{id}        -> liquidaciones y recibos (solo administración)
-//   fichajes/{autoId}     -> entradas y salidas (el kiosco solo puede crear)
+//   fichajes/{autoId}     -> entradas y salidas (la cuenta de asistencias solo puede crear)
 //
 // Los permisos se definen en firestore.rules.
 import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
@@ -285,6 +285,7 @@ const normalizarFichaje = (d) => {
         nota: data.nota || '',
         editado: !!data.editado,
         timestampOriginal: data.timestampOriginal ? data.timestampOriginal.toMillis() : null,
+        registradoEn: data.registradoEn ? data.registradoEn.toMillis() : null, // cuándo llegó a Firebase
         pendiente: d.metadata ? d.metadata.hasPendingWrites : false
     };
 };
@@ -311,19 +312,110 @@ const obtenerFichajes = async (rango) => {
     return lista;
 };
 
-// Desde el kiosco la hora la pone el servidor de Firebase (no se puede adulterar
-// cambiando el reloj del equipo). Las cargas manuales usan la hora indicada.
-const registrarFichaje = ({ empleadoId, empleadoNombre, tipo, timestamp, origen = 'kiosco', nota = '' }) => {
-    const datos = { empleadoId, empleadoNombre: empleadoNombre || '', tipo, origen, nota };
-    if (origen === 'kiosco') {
-        // Se usa una transacción porque, sin conexión, falla en el momento. Con addDoc la marca
-        // quedaría en cola y se guardaría al volver internet con la hora de la reconexión.
-        const ref = doc(collection(db, 'fichajes'));
-        return runTransaction(db, async (t) => { t.set(ref, { ...datos, timestamp: serverTimestamp() }); }).then(() => ref);
+// Identificador para una marca nueva. Se genera en el equipo antes de enviarla, así los
+// reintentos usan siempre el mismo y una marca nunca se guarda dos veces.
+const nuevoIdFichaje = () => doc(collection(db, 'fichajes')).id;
+
+// Cargas manuales del sistema interno: usan la hora indicada.
+const registrarFichaje = ({ empleadoId, empleadoNombre, tipo, timestamp, origen = 'manual', nota = '' }) =>
+    addDoc(collection(db, 'fichajes'), { empleadoId, empleadoNombre: empleadoNombre || '', tipo, origen, nota, timestamp: Timestamp.fromMillis(timestamp) });
+
+// Envía a Firebase una marca del Módulo de Asistencias. La hora es la del momento en que el
+// empleado fichó (reloj ajustado a la hora oficial), y `registradoEn` la pone el servidor al
+// recibirla. Es una transacción: si la marca con ese id ya existe (un envío anterior que sí
+// llegó), no se escribe de nuevo.
+const enviarMarca = async (m) => {
+    const ref = doc(db, 'fichajes', m.id);
+    const datos = { empleadoId: m.empleadoId, empleadoNombre: m.empleadoNombre || '', tipo: m.tipo, origen: 'kiosco', nota: m.nota || '' };
+    const escribir = (conHoraDelEquipo) => runTransaction(db, async (t) => {
+        const previa = await t.get(ref);
+        if (previa.exists()) return;
+        t.set(ref, conHoraDelEquipo
+            ? { ...datos, timestamp: Timestamp.fromMillis(m.timestamp), registradoEn: serverTimestamp() }
+            : { ...datos, timestamp: serverTimestamp() });
+    });
+    try {
+        await escribir(true);
+    } catch (e) {
+        // Si las reglas publicadas todavía son las anteriores (solo aceptan la hora del servidor),
+        // una marca recién hecha se envía con ese formato. Las más viejas esperan a las reglas nuevas.
+        if (e.code === 'permission-denied' && ahora() - m.timestamp < 2 * 60 * 1000) return escribir(false);
+        throw e;
     }
-    datos.timestamp = Timestamp.fromMillis(timestamp);
-    return addDoc(collection(db, 'fichajes'), datos);
 };
+
+// ---------- Marcas pendientes de envío ----------
+// Cada marca se guarda primero en este equipo (localStorage) y se envía en segundo plano,
+// reintentando hasta que Firebase la confirma. Así un corte de internet o una conexión lenta
+// nunca impiden fichar, y las marcas sobreviven a una recarga o un reinicio de la PC.
+
+const CLAVE_PENDIENTES = 'modashop.marcasPendientes';
+const ESPERA_ENVIO_MS = 20000;
+let pendientesEnMemoria = []; // respaldo si el navegador no deja usar localStorage
+
+const leerPendientes = () => {
+    try {
+        const texto = localStorage.getItem(CLAVE_PENDIENTES);
+        return texto ? JSON.parse(texto) : [];
+    } catch (e) {
+        return pendientesEnMemoria;
+    }
+};
+const guardarPendientes = (lista) => {
+    pendientesEnMemoria = lista;
+    try { localStorage.setItem(CLAVE_PENDIENTES, JSON.stringify(lista)); } catch (e) { /* queda en memoria */ }
+    window.dispatchEvent(new Event('marcas-pendientes'));
+};
+
+// Avisa cada vez que cambia la lista (también si cambia en otra pestaña del mismo equipo)
+const escucharPendientes = (callback) => {
+    const avisar = () => callback(leerPendientes());
+    const porOtraPestana = (e) => { if (e.key === CLAVE_PENDIENTES) avisar(); };
+    window.addEventListener('marcas-pendientes', avisar);
+    window.addEventListener('storage', porOtraPestana);
+    avisar();
+    return () => {
+        window.removeEventListener('marcas-pendientes', avisar);
+        window.removeEventListener('storage', porOtraPestana);
+    };
+};
+
+let enviando = false;
+const enviarPendientes = async () => {
+    if (enviando || !auth || !auth.currentUser) return;
+    enviando = true;
+    try {
+        for (const m of leerPendientes()) {
+            try {
+                // Si el envío llega después de agotada la espera, igual se quita de la lista
+                const envio = enviarMarca(m).then(() => guardarPendientes(leerPendientes().filter(p => p.id !== m.id)));
+                envio.catch(() => {}); // si falla tarde, se reintenta en la próxima vuelta
+                await Promise.race([
+                    envio,
+                    new Promise((_, rechazar) => setTimeout(() => rechazar({ code: 'tiempo-agotado' }), ESPERA_ENVIO_MS))
+                ]);
+            } catch (e) {
+                console.warn('Marca pendiente sin enviar todavía:', m.id, e.code || e);
+                guardarPendientes(leerPendientes().map(p => p.id === m.id ? { ...p, intentos: (p.intentos || 0) + 1, ultimoError: e.code || 'error' } : p));
+            }
+        }
+    } finally {
+        enviando = false;
+    }
+};
+
+// Registra la marca en el equipo al instante y la manda a Firebase en segundo plano.
+// Devuelve la marca tal como se va a guardar.
+const registrarMarca = ({ empleadoId, empleadoNombre, tipo, nota = '' }) => {
+    const marca = { id: nuevoIdFichaje(), empleadoId, empleadoNombre: empleadoNombre || '', tipo, nota, timestamp: Math.round(ahora()) };
+    guardarPendientes([...leerPendientes(), marca]);
+    enviarPendientes();
+    return marca;
+};
+
+// Reintenta solo: cada 15 segundos y apenas vuelve la red
+setInterval(enviarPendientes, 15000);
+window.addEventListener('online', () => enviarPendientes());
 
 const eliminarFichaje = (id) => deleteDoc(doc(db, 'fichajes', id));
 
@@ -477,7 +569,8 @@ const importarRespaldo = async ({ empleados = [], historial = [], fichajes = [] 
             nota: f.nota || '',
             timestamp: Timestamp.fromMillis(f.timestamp),
             ...(f.editado ? { editado: true } : {}),
-            ...(f.timestampOriginal ? { timestampOriginal: Timestamp.fromMillis(f.timestampOriginal) } : {})
+            ...(f.timestampOriginal ? { timestampOriginal: Timestamp.fromMillis(f.timestampOriginal) } : {}),
+            ...(f.registradoEn ? { registradoEn: Timestamp.fromMillis(f.registradoEn) } : {})
         }));
     });
     // Firestore admite hasta 500 escrituras por lote
@@ -509,6 +602,9 @@ window.Datos = {
     escucharFichajes,
     obtenerFichajes,
     registrarFichaje,
+    registrarMarca,
+    escucharPendientes,
+    enviarPendientes,
     eliminarFichaje,
     guardarJornada,
     JORNADA_MAX_MS,
