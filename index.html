@@ -1772,6 +1772,7 @@
             };
 
             // (M) = cargada a mano · (E) = corregida (el cartelito muestra la hora original)
+            // (D) = diferida: se fichó sin conexión y llegó después (el cartelito dice cuándo)
             const textoOriginal = (f) => {
                 if (!f.timestampOriginal) return 'Corregida desde el sistema interno';
                 const o = Datos.partesAR(new Date(f.timestampOriginal));
@@ -1785,6 +1786,9 @@
                         : (f.origen === 'manual' ? <span title="Cargada a mano" className="ml-1 text-[9px] text-slate-400">(M)</span> : null)}
                     {f.origen === 'kiosco' && (f.nota || '').startsWith('Con advertencia') && (
                         <span title={f.nota} className="ml-1 text-[11px] text-amber-600 font-black cursor-help">⚠</span>
+                    )}
+                    {f.registradoEn && f.registradoEn - f.timestamp > 2 * 60 * 1000 && (
+                        <span title={`Se fichó sin conexión y llegó al sistema el ${Datos.fechaCorta(Datos.partesAR(new Date(f.registradoEn)).fecha)} a las ${Datos.partesAR(new Date(f.registradoEn)).hora.slice(0, 5)}`} className="ml-1 text-[10px] text-sky-600 font-black cursor-help">(D)</span>
                     )}
                 </>
             );
@@ -1963,7 +1967,7 @@
                                                 <td className="py-3 px-5 font-mono text-slate-700">{Datos.fechaCorta(f.fecha)} {f.hora}{marcaOrigen(f)}</td>
                                                 <td className="py-3 px-5 font-bold text-slate-800">{nombreEmpleado(f.empleadoId, f.empleadoNombre)}</td>
                                                 <td className="py-3 px-5 text-center">{badgeTipo(f.tipo)}</td>
-                                                <td className="py-3 px-5 text-slate-500 text-xs">{f.origen === 'manual' ? 'Carga manual' : 'Módulo de asistencias'}{f.editado ? ' · corregida' : ''}{f.nota ? ` · ${f.nota}` : ''}</td>
+                                                <td className="py-3 px-5 text-slate-500 text-xs">{f.origen === 'manual' ? 'Carga manual' : 'Módulo de asistencias'}{f.editado ? ' · corregida' : ''}{f.registradoEn && f.registradoEn - f.timestamp > 2 * 60 * 1000 ? ` · fichada sin conexión, llegó ${Datos.fechaCorta(Datos.partesAR(new Date(f.registradoEn)).fecha)} ${Datos.partesAR(new Date(f.registradoEn)).hora.slice(0, 5)}` : ''}{f.nota ? ` · ${f.nota}` : ''}</td>
                                                 <td className="py-3 px-5 text-center">
                                                     <button onClick={() => onEliminarFichaje(f)} className="p-2 text-red-600 hover:bg-red-100 rounded-lg transition-colors opacity-0 group-hover:opacity-100" title="Eliminar">
                                                         <Icon name="trash" className="w-4 h-4"/>

@@ -88,7 +88,9 @@ Las frases se guardan en Firebase, en la colección `configuracion`. Para que fu
 ## Funcionamiento continuo del Módulo de Asistencias (24/7)
 El módulo de asistencias está preparado para quedar abierto sin interrupciones:
 
-- **Cortes de internet:** aparece un aviso arriba y la conexión con Firebase se recupera sola. Mientras no hay conexión, las marcas **no se registran** y se le avisa al empleado en el momento. Así ninguna marca se guarda después con la hora de la reconexión.
+- **Fichar nunca depende de internet:** cada marca se confirma al instante y queda guardada en el equipo con la hora oficial del momento en que se fichó. Después se envía sola a Firebase y reintenta hasta que llega, aunque haya un corte de internet, la conexión esté lenta o se reinicie la PC. Una marca nunca se guarda dos veces.
+- **Cortes de internet:** aparece un aviso arriba y la conexión con Firebase se recupera sola. Si alguna marca tarda más de 30 segundos en llegar, también se avisa arriba cuántas quedan por enviar.
+- En el sistema interno, una marca que se fichó sin conexión y llegó después aparece con **(D)**. Al pasar el mouse muestra cuándo llegó.
 - **Si Firebase corta la conexión en vivo**, se vuelve a conectar sola cada 30 segundos. La sesión de asistencias no se cierra por un error pasajero.
 - **Si la página se abre o se recarga sin internet**, muestra "Sin conexión a internet" y se abre sola cuando vuelve la conexión.
 - **Si ocurre un error inesperado**, en lugar de quedar la pantalla en blanco muestra "Reiniciando el módulo..." y se recarga sola.
@@ -97,7 +99,7 @@ El módulo de asistencias está preparado para quedar abierto sin interrupciones
 - **La pantalla no se apaga** mientras el módulo está abierto (cuando el navegador lo permite, como en Chrome y Edge con la dirección publicada).
 - Las librerías externas se cargan con **versiones fijas**, así una versión nueva publicada en internet no puede romper el Módulo de Asistencias.
 
-El tiempo trabajado se calcula con la hora de la entrada guardada en Firebase. Por eso sigue siendo correcto aunque el equipo se quede sin internet o se reinicie: al volver, el Módulo de Asistencias y el sistema interno muestran "Trabajando · desde 08:00 · 3h 20m".
+El tiempo trabajado se calcula con la hora de la entrada. Por eso sigue siendo correcto aunque el equipo se quede sin internet o se reinicie: al volver, el Módulo de Asistencias y el sistema interno muestran "Trabajando · desde 08:00 · 3h 20m".
 
 ### Si no se pudo fichar
 En **Asistencias → Jornadas** del sistema interno:
@@ -113,7 +115,7 @@ Recomendaciones para la computadora del Módulo de Asistencias:
 ## Seguridad
 - Los valores de `js/firebase-config.js` no son secretos: Firebase los expone en cualquier app web. Lo que protege los datos son las cuentas y las reglas de `firestore.rules`.
 - La cuenta de asistencias **no puede ver sueldos ni liquidaciones**. Solo lee nombre, puesto y PIN cifrado de cada empleado, lee las marcas y crea marcas nuevas. No puede modificar ni borrar marcas.
-- La hora de cada fichaje la pone el **servidor de Firebase**, así que no se puede adulterar cambiando el reloj del equipo donde se ficha.
+- La hora de cada fichaje es la **hora oficial**: el reloj se ajusta con la hora del servidor al abrir y cada hora, así que no depende de cómo esté configurado el reloj de la PC. Además, Firebase registra cuándo recibió cada marca, y las reglas rechazan horas futuras o de más de 7 días atrás.
 - Después de 5 PIN incorrectos, se bloquea a ese empleado durante 5 minutos en ese equipo.
 - El PIN se valida en el equipo donde se ficha. Por eso, la cuenta de asistencias tiene que usarse solo en ese equipo.
 

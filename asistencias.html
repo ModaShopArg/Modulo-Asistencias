@@ -88,7 +88,6 @@
         const INACTIVIDAD_PIN_MS = 30000;
         const DURACION_CONFIRMACION_MS = 9000; // con tiempo para leer la frase motivadora
         const MARCA_DUPLICADA_MS = 2 * 60 * 1000;
-        const TIEMPO_MAX_REGISTRO_MS = 15000;
         const VENTANA_FICHAJES_MS = 24 * 60 * 60 * 1000;
         const REINTENTO_CONEXION_MS = 30000;
         const HORA_REINICIO_DIARIO = '04'; // recarga diaria (hora argentina) para liberar memoria y tomar actualizaciones
@@ -220,18 +219,6 @@
             );
         };
 
-        // Marca en curso por empleado. Si la confirmación tarda y el empleado vuelve a intentar,
-        // se reusa el mismo id: si el primer intento sí se había guardado, no se duplica.
-        const VIGENCIA_INTENTO_MS = 2 * 60 * 1000;
-        const intentosPendientes = new Map(); // empleadoId -> { id, tipo, creado }
-        const idParaIntento = (empleadoId, tipo) => {
-            const previo = intentosPendientes.get(empleadoId);
-            if (previo && previo.tipo === tipo && Date.now() - previo.creado < VIGENCIA_INTENTO_MS) return previo.id;
-            const id = Datos.nuevoIdFichaje();
-            intentosPendientes.set(empleadoId, { id, tipo, creado: Date.now() });
-            return id;
-        };
-
         // ---------- Paso 2: ingresar PIN ----------
         const IngresoPin = ({ empleado, fichajes, onVolver, onRegistrado }) => {
             const [pin, setPin] = useState('');
@@ -264,30 +251,20 @@
             const [registrando, setRegistrando] = useState(false);
             const [advertencia, setAdvertencia] = useState(null); // { titulo, detalle, nota } esperando confirmación
 
-            // La hora la pone el servidor de Firebase; se espera su confirmación.
+            // La marca queda registrada al instante en este equipo con la hora oficial, y se envía
+            // a Firebase en segundo plano (reintentando sola si no hay internet o la conexión está lenta).
             // `nota` queda guardada en la marca cuando se registró con advertencia.
-            const registrar = useCallback(async (nota = '') => {
+            const registrar = useCallback((nota = '') => {
                 setAdvertencia(null);
                 setRegistrando(true);
-                const id = idParaIntento(empleado.id, tipo);
                 try {
-                    await Promise.race([
-                        Datos.registrarFichaje({ id, empleadoId: empleado.id, empleadoNombre: empleado.nombre, tipo, origen: 'kiosco', nota }),
-                        new Promise((_, rechazar) => setTimeout(() => rechazar({ code: 'tiempo-agotado' }), TIEMPO_MAX_REGISTRO_MS))
-                    ]);
-                    intentosPendientes.delete(empleado.id);
-                    const { fecha, hora } = Datos.partesAR();
-                    onRegistrado({ id, empleadoId: empleado.id, empleadoNombre: empleado.nombre, tipo, fecha, hora, conAdvertencia: !!nota });
+                    const marca = Datos.registrarMarca({ empleadoId: empleado.id, empleadoNombre: empleado.nombre, tipo, nota });
+                    const { fecha, hora } = Datos.partesAR(new Date(marca.timestamp));
+                    onRegistrado({ ...marca, fecha, hora, conAdvertencia: !!nota });
                 } catch (err) {
                     console.error(err);
                     setRegistrando(false);
-                    if (err.code === 'tiempo-agotado') {
-                        mostrarError('La conexión está lenta y no se pudo confirmar la marca. Volvé a ingresar tu PIN: si ya había quedado guardada, no se duplica.');
-                    } else if (err.code === 'unavailable' || !navigator.onLine) {
-                        mostrarError('Sin conexión a internet: la marca NO se registró. Probá de nuevo en unos minutos o avisá a tu encargado/a.');
-                    } else {
-                        mostrarError('No se pudo registrar: ' + Datos.errorAmigable(err));
-                    }
+                    mostrarError('No se pudo registrar: ' + Datos.errorAmigable(err));
                 }
             }, [empleado, tipo, onRegistrado]);
 
@@ -500,7 +477,7 @@
         };
 
         // ---------- Paso 3: confirmación ----------
-        const Confirmacion = ({ fichaje, onFin }) => {
+        const Confirmacion = ({ fichaje, onFin, sinConexion }) => {
             useEffect(() => {
                 const t = setTimeout(onFin, DURACION_CONFIRMACION_MS);
                 const onKey = () => onFin();
@@ -523,6 +500,9 @@
                         <p className="mt-3 inline-flex items-center gap-2 bg-amber-100 text-amber-800 font-bold text-sm px-4 py-1.5 rounded-full">
                             <Icon name="alert" className="w-4 h-4"/> Registrada con advertencia: administración la va a revisar
                         </p>
+                    )}
+                    {sinConexion && (
+                        <p className="mt-3 text-sm font-semibold text-slate-500">Quedó guardada en este equipo con esta hora y se envía sola cuando vuelva internet.</p>
                     )}
                     {fichaje.frase && (
                         <div
@@ -692,14 +672,22 @@
             const [empleados, setEmpleados] = useState([]);
             const [fichajes, setFichajes] = useState([]);
             const [marcasLocales, setMarcasLocales] = useState([]); // registradas acá y todavía no recibidas de Firebase
+            const [pendientes, setPendientes] = useState([]);       // guardadas en este equipo, sin confirmar por Firebase
+            useEffect(() => Datos.escucharPendientes(setPendientes), []);
 
-            // Lo que se usa en pantalla: las marcas de Firebase más las recién registradas en este
-            // equipo que todavía no llegaron. Así el estado de cada empleado es correcto al instante.
+            // Lo que se usa en pantalla: las marcas de Firebase más las registradas en este equipo
+            // que todavía no llegaron. Así el estado de cada empleado es correcto al instante,
+            // aunque no haya internet.
             const fichajesVista = useMemo(() => {
                 const ids = new Set(fichajes.map(f => f.id));
-                const faltantes = marcasLocales.filter(m => !ids.has(m.id));
+                const faltantes = [];
+                [...pendientes.map(p => ({ ...p, ...Datos.partesAR(new Date(p.timestamp)), origen: 'kiosco' })), ...marcasLocales].forEach(m => {
+                    if (!ids.has(m.id)) { ids.add(m.id); faltantes.push(m); }
+                });
                 return faltantes.length ? [...fichajes, ...faltantes] : fichajes;
-            }, [fichajes, marcasLocales]);
+            }, [fichajes, marcasLocales, pendientes]);
+            // Pendientes hace más de 30 segundos: se avisa arriba (las demás se están enviando normalmente)
+            const atrasadas = pendientes.filter(p => Datos.ahora() - p.timestamp > 30000).length;
 
             // Cuando Firebase ya las devolvió (o pasaron 10 minutos), se descartan
             useEffect(() => {
@@ -771,6 +759,9 @@
                 }
             }, []);
             useEffect(() => () => clearTimeout(timerReintento.current), []);
+
+            // Al conectarse la sesión se envían las marcas que hayan quedado guardadas en el equipo
+            useEffect(() => { if (usuario) Datos.enviarPendientes(); }, [usuario]);
 
             // Empleados (nombre, puesto y PIN) en vivo: los cambios del tablero interno llegan al instante
             useEffect(() => {
@@ -908,7 +899,7 @@
             const registrado = useCallback((fichaje) => {
                 setMarcasLocales(prev => [...prev.filter(m => m.id !== fichaje.id), {
                     id: fichaje.id, empleadoId: fichaje.empleadoId, empleadoNombre: fichaje.empleadoNombre, tipo: fichaje.tipo,
-                    timestamp: Datos.ahora(), fecha: fichaje.fecha, hora: fichaje.hora, origen: 'kiosco', nota: ''
+                    timestamp: fichaje.timestamp, fecha: fichaje.fecha, hora: fichaje.hora, origen: 'kiosco', nota: fichaje.nota || ''
                 }]);
                 setUltimoRegistro({ ...fichaje, frase: elegirFrase(fichaje.tipo, fichaje.empleadoNombre) });
                 setPaso('ok');
@@ -955,9 +946,13 @@
                         <div className="bg-rose-100 border-b border-rose-300 text-rose-900 font-bold text-center py-2 px-4 text-sm">
                             Esta cuenta no tiene permiso para leer los datos. Se reintenta automáticamente; si sigue, avisá a administración.
                         </div>
-                    ) : (!enLinea || !sincronizado || errorDatos) && (
+                    ) : (!enLinea || !sincronizado || errorDatos) ? (
                         <div className="bg-amber-100 border-b border-amber-300 text-amber-900 font-bold text-center py-2 px-4 text-sm">
-                            Sin conexión a internet. Las marcas no se pueden registrar hasta que vuelva la conexión (se reconecta sola).
+                            Sin conexión a internet. Se puede fichar igual: las marcas quedan guardadas en este equipo y se envían solas cuando vuelve la conexión.
+                        </div>
+                    ) : atrasadas > 0 && (
+                        <div className="bg-amber-100 border-b border-amber-300 text-amber-900 font-bold text-center py-2 px-4 text-sm">
+                            {atrasadas === 1 ? 'Hay 1 marca guardada en este equipo que todavía no llegó' : `Hay ${atrasadas} marcas guardadas en este equipo que todavía no llegaron`} al sistema. Se siguen enviando solas.
                         </div>
                     )}
 
@@ -977,7 +972,7 @@
                         )}
                         {paso === 'ok' && ultimoRegistro && (
                             <div className="flex-1">
-                                <Confirmacion fichaje={ultimoRegistro} onFin={volverALista} />
+                                <Confirmacion fichaje={ultimoRegistro} onFin={volverALista} sinConexion={!enLinea || !sincronizado || !!errorDatos} />
                             </div>
                         )}
                     </main>
