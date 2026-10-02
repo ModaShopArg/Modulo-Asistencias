@@ -156,9 +156,33 @@
 
         const ListaEmpleados = ({ empleados, fichajes, onElegir }) => {
             const [busqueda, setBusqueda] = useState('');
+            const refBuscador = useRef(null);
             const filtrados = empleados
                 .filter(e => normalizar(e.nombre).includes(normalizar(busqueda.trim())))
                 .sort((a, b) => a.nombre.localeCompare(b.nombre));
+
+            // Al escribir en el teclado (estando en esta pantalla) se enfoca el buscador
+            // y la letra pulsada entra directamente, sin tener que hacer clic antes.
+            useEffect(() => {
+                const alTeclear = (e) => {
+                    if (e.ctrlKey || e.metaKey || e.altKey) return;        // atajos: no interferir
+                    const campo = refBuscador.current;
+                    if (!campo || document.activeElement === campo) return; // ya está escribiendo
+                    const activo = document.activeElement;
+                    if (activo && ['INPUT', 'TEXTAREA', 'SELECT'].includes(activo.tagName)) return;
+                    if (e.key === 'Backspace') {                            // borrar aunque no esté enfocado
+                        e.preventDefault();
+                        campo.focus();
+                        setBusqueda(prev => prev.slice(0, -1));
+                    } else if (e.key.length === 1) {                        // una letra, número o símbolo
+                        e.preventDefault();
+                        campo.focus();
+                        setBusqueda(prev => prev + e.key);
+                    }
+                };
+                window.addEventListener('keydown', alTeclear);
+                return () => window.removeEventListener('keydown', alTeclear);
+            }, []);
 
             return (
                 <div className="flex flex-col h-full">
@@ -166,6 +190,7 @@
                         <div className="relative w-full max-w-2xl">
                             <Icon name="search" className="w-6 h-6 absolute left-5 top-1/2 -translate-y-1/2 text-slate-400"/>
                             <input
+                                ref={refBuscador}
                                 value={busqueda}
                                 onChange={e => setBusqueda(e.target.value)}
                                 placeholder="Buscá tu nombre..."
@@ -845,7 +870,10 @@
                     if (recorrido > 12) actividad();
                 };
                 const alTeclear = (e) => {
-                    if (reposoRef.current) { e.preventDefault(); e.stopPropagation(); } // la tecla solo despierta
+                    // Al despertar: las teclas de texto y el Backspace las dejamos pasar al
+                    // buscador (ListaEmpleados) para que esa misma tecla ya empiece a buscar al
+                    // empleado; del resto (Tab, Enter, flechas, etc.) evitamos el efecto del navegador.
+                    if (reposoRef.current && e.key.length !== 1 && e.key !== 'Backspace') e.preventDefault();
                     actividad();
                 };
 
