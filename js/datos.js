@@ -11,7 +11,8 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
 import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged, updatePassword, reauthenticateWithCredential, EmailAuthProvider, sendPasswordResetEmail } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
 import {
-    getFirestore, collection, doc, setDoc, deleteDoc, updateDoc, addDoc, getDocs,
+    getFirestore, initializeFirestore, persistentLocalCache, persistentMultipleTabManager,
+    collection, doc, setDoc, deleteDoc, updateDoc, addDoc, getDocs,
     onSnapshot, query, where, orderBy, limit, writeBatch, runTransaction, serverTimestamp, Timestamp
 } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
@@ -29,7 +30,19 @@ let db = null;
 if (configurado) {
     const app = initializeApp(config);
     auth = getAuth(app);
-    db = getFirestore(app);
+    // Caché en disco (IndexedDB): la lista de empleados y los fichajes recientes quedan
+    // guardados en el equipo, así el módulo abre al instante y sigue mostrando los datos
+    // aunque se reinicie la PC sin internet. persistentMultipleTabManager coordina la caché
+    // si llegara a haber más de una pestaña abierta. Si el navegador no permite IndexedDB
+    // (modo privado, equipo viejo), se cae a la caché en memoria sin romper el módulo.
+    try {
+        db = initializeFirestore(app, {
+            localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() })
+        });
+    } catch (e) {
+        console.warn('No se pudo activar la caché en disco; se usa la de memoria.', e);
+        db = getFirestore(app);
+    }
 }
 
 // ---------- Sesión ----------
