@@ -164,6 +164,10 @@
             // Al escribir en el teclado (estando en esta pantalla) se enfoca el buscador
             // y la letra pulsada entra directamente, sin tener que hacer clic antes.
             useEffect(() => {
+                // En equipos con teclado físico, enfocamos el buscador al entrar para que la
+                // primera tecla entre seguro. En pantallas táctiles no, para no abrir el teclado en pantalla.
+                const esTactil = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
+                if (!esTactil && refBuscador.current) refBuscador.current.focus();
                 const alTeclear = (e) => {
                     if (e.ctrlKey || e.metaKey || e.altKey) return;        // atajos: no interferir
                     const campo = refBuscador.current;
@@ -757,11 +761,28 @@
                 return () => { vigente = false; };
             }, [usuario]);
 
-            // Ajusta el reloj a la hora del servidor al abrir y cada hora
+            // Renueva cada hora la ventana de fichajes de las últimas 24 hs
+            useEffect(() => {
+                const t = setInterval(() => setVentana(v => v + 1), 60 * 60 * 1000);
+                return () => clearInterval(t);
+            }, []);
+
+            // Mantiene el reloj en la hora oficial (Date del servidor): al abrir, cada 5 minutos,
+            // apenas vuelve la conexión y cada vez que la pantalla se vuelve a mostrar. Así, aunque
+            // al prender la PC la red todavía no esté lista, el reloj se corrige solo en cuanto hay
+            // internet, sin tener que refrescar. La marca usa esta misma hora, nunca la del equipo.
             useEffect(() => {
                 Datos.sincronizarHora();
-                const t = setInterval(() => { Datos.sincronizarHora(); setVentana(v => v + 1); }, 60 * 60 * 1000);
-                return () => clearInterval(t);
+                const cada = setInterval(() => Datos.sincronizarHora(), 5 * 60 * 1000);
+                const alConectar = () => Datos.sincronizarHora();
+                const alVolver = () => { if (document.visibilityState === 'visible') Datos.sincronizarHora(); };
+                window.addEventListener('online', alConectar);
+                document.addEventListener('visibilitychange', alVolver);
+                return () => {
+                    clearInterval(cada);
+                    window.removeEventListener('online', alConectar);
+                    document.removeEventListener('visibilitychange', alVolver);
+                };
             }, []);
 
             // Estado de la red del equipo
