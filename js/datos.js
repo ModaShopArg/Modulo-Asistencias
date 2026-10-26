@@ -559,15 +559,25 @@ const FRASES_PREDETERMINADAS = {
     ]
 };
 
-const limpiarFrases = (lista) => (Array.isArray(lista) ? lista : []).map(f => String(f).trim()).filter(Boolean);
+// Normaliza cada frase a { texto, empleadoId }. Acepta el formato viejo (texto suelto):
+// en ese caso queda "para todos". empleadoId '' = cualquier empleado; si no, el id (número) del empleado.
+const limpiarFrases = (lista) => (Array.isArray(lista) ? lista : []).map(f => {
+    const texto = String((typeof f === 'string' ? f : (f && f.texto)) ?? '').trim();
+    let empleadoId = '';
+    if (f && typeof f === 'object' && f.empleadoId !== '' && f.empleadoId != null) {
+        const n = Number(f.empleadoId);
+        empleadoId = Number.isFinite(n) ? n : '';
+    }
+    return { texto, empleadoId };
+}).filter(f => f.texto);
 
 // callback({ entrada, salida, personalizadas }): si todavía no se cargaron frases, usa las predeterminadas
 const escucharFrases = (callback, onError) =>
     onSnapshot(doc(db, 'configuracion', 'frases'), snap => {
         const d = snap.exists() ? snap.data() : null;
         callback({
-            entrada: d ? limpiarFrases(d.entrada) : FRASES_PREDETERMINADAS.entrada,
-            salida: d ? limpiarFrases(d.salida) : FRASES_PREDETERMINADAS.salida,
+            entrada: limpiarFrases(d ? d.entrada : FRASES_PREDETERMINADAS.entrada),
+            salida: limpiarFrases(d ? d.salida : FRASES_PREDETERMINADAS.salida),
             personalizadas: !!d
         });
     }, onError);
