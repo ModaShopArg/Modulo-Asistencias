@@ -688,9 +688,9 @@
         // Marca de agua del desarrollador. Se abre en otra pestaña para no salir del sistema de asistencia.
         const MarcaPSM = () => (
             <a href="https://psmsaas.pages.dev/" target="_blank" rel="noopener noreferrer" title="psmsaas.pages.dev"
-                className="inline-flex items-center gap-1.5 text-[11px] text-slate-400 opacity-70 hover:opacity-100 hover:text-slate-600 transition-opacity">
+                className="inline-flex items-center gap-1.5 text-xs text-slate-500 hover:text-brand-primary transition-colors">
                 <span>Powered by:</span>
-                <img src="https://psmsaas.pages.dev/psm.png" alt="" className="h-4 w-4 object-contain" onError={e => { e.currentTarget.style.display = 'none'; }} />
+                <img src="https://psmsaas.pages.dev/psm.png" alt="" className="h-5 w-5 object-contain" onError={e => { e.currentTarget.style.display = 'none'; }} />
                 <span className="font-bold">psmsaas</span>
             </a>
         );
@@ -936,13 +936,17 @@
                 return Datos.escucharFrases(f => { frasesRef.current = f; }, err => console.warn('Frases motivadoras:', err.code || err));
             }, [usuario, reintento]);
 
-            const elegirFrase = (tipo, nombreCompleto) => {
-                const lista = frasesRef.current[tipo] || [];
+            const elegirFrase = (tipo, empleadoId, nombreCompleto) => {
+                // Normaliza (acepta frases viejas como texto suelto) y deja las "para todos"
+                // más las asignadas a este empleado.
+                const lista = (frasesRef.current[tipo] || [])
+                    .map(f => typeof f === 'string' ? { texto: f, empleadoId: '' } : { texto: (f && f.texto) || '', empleadoId: (f && f.empleadoId) ?? '' })
+                    .filter(f => f.texto && (f.empleadoId === '' || f.empleadoId === empleadoId));
                 if (lista.length === 0) return '';
-                const opciones = lista.length > 1 ? lista.filter(f => f !== ultimaFrase.current) : lista; // no repetir la anterior
-                const frase = opciones[Math.floor(Math.random() * opciones.length)];
-                ultimaFrase.current = frase;
-                return frase.replace(/\{nombre\}/gi, nombreCompleto.split(' ')[0]);
+                const opciones = lista.length > 1 ? lista.filter(f => f.texto !== ultimaFrase.current) : lista; // no repetir la anterior
+                const elegida = opciones[Math.floor(Math.random() * opciones.length)];
+                ultimaFrase.current = elegida.texto;
+                return elegida.texto.replace(/\{nombre\}/gi, nombreCompleto.split(' ')[0]);
             };
 
             const registrado = useCallback((fichaje) => {
@@ -950,7 +954,7 @@
                     id: fichaje.id, empleadoId: fichaje.empleadoId, empleadoNombre: fichaje.empleadoNombre, tipo: fichaje.tipo,
                     timestamp: fichaje.timestamp, fecha: fichaje.fecha, hora: fichaje.hora, origen: 'kiosco', nota: fichaje.nota || ''
                 }]);
-                setUltimoRegistro({ ...fichaje, frase: elegirFrase(fichaje.tipo, fichaje.empleadoNombre) });
+                setUltimoRegistro({ ...fichaje, frase: elegirFrase(fichaje.tipo, fichaje.empleadoId, fichaje.empleadoNombre) });
                 setPaso('ok');
             }, []);
 

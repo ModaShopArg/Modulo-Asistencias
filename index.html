@@ -172,9 +172,9 @@
         // Marca de agua del desarrollador
         const MarcaPSM = () => (
             <a href="https://psmsaas.pages.dev/" target="_blank" rel="noopener noreferrer" title="psmsaas.pages.dev"
-                className="inline-flex items-center gap-1.5 text-[11px] text-slate-400 opacity-70 hover:opacity-100 hover:text-slate-600 transition-opacity">
+                className="inline-flex items-center gap-1.5 text-xs text-slate-500 hover:text-brand-primary transition-colors">
                 <span>Powered by:</span>
-                <img src="https://psmsaas.pages.dev/psm.png" alt="" className="h-4 w-4 object-contain" onError={e => { e.currentTarget.style.display = 'none'; }} />
+                <img src="https://psmsaas.pages.dev/psm.png" alt="" className="h-5 w-5 object-contain" onError={e => { e.currentTarget.style.display = 'none'; }} />
                 <span className="font-bold">psmsaas</span>
             </a>
         );
@@ -2048,9 +2048,9 @@
         };
 
         // Frases que el Módulo de Asistencias muestra al fichar la entrada y la salida
-        const FrasesMotivadoras = ({ showToast }) => {
+        const FrasesMotivadoras = ({ empleados, showToast }) => {
             const [frases, setFrases] = useState(null);
-            const [nuevas, setNuevas] = useState({ entrada: '', salida: '' });
+            const [nuevas, setNuevas] = useState({ entrada: { texto: '', empleadoId: '' }, salida: { texto: '', empleadoId: '' } });
             const [errorLectura, setErrorLectura] = useState('');
             const [confirmarRestaurar, setConfirmarRestaurar] = useState(false);
 
@@ -2060,6 +2060,13 @@
                     ? 'Para usar esta sección, publicá en Firebase las reglas actualizadas del archivo firestore.rules (Firestore Database → Reglas).'
                     : Datos.errorAmigable(err))
             ), []);
+
+            // Empleados ordenados por nombre para el menú desplegable
+            const empleadosOrden = [...empleados].sort((a, b) => (a.nombre || '').localeCompare(b.nombre || ''));
+            const nombreDe = (id) => {
+                const e = empleados.find(x => x.id === id);
+                return e ? e.nombre : 'empleado eliminado';
+            };
 
             const guardar = async (cambios, mensaje) => {
                 try {
@@ -2072,10 +2079,11 @@
 
             const agregar = (tipo) => (e) => {
                 e.preventDefault();
-                const texto = nuevas[tipo].trim();
+                const texto = nuevas[tipo].texto.trim();
                 if (!texto) return;
-                guardar({ [tipo]: [...frases[tipo], texto] }, 'Frase agregada.');
-                setNuevas({ ...nuevas, [tipo]: '' });
+                const empleadoId = nuevas[tipo].empleadoId === '' ? '' : Number(nuevas[tipo].empleadoId);
+                guardar({ [tipo]: [...frases[tipo], { texto, empleadoId }] }, 'Frase agregada.');
+                setNuevas({ ...nuevas, [tipo]: { texto: '', empleadoId: '' } });
             };
 
             const quitar = (tipo, indice) => guardar({ [tipo]: frases[tipo].filter((_, i) => i !== indice) }, 'Frase eliminada.');
@@ -2116,6 +2124,7 @@
                     <p className="text-slate-500 mb-6">
                         El Módulo de Asistencias muestra una al azar, bien destacada, cada vez que alguien ficha.
                         Escribí <code className="bg-slate-100 text-brand-primary font-bold px-1.5 py-0.5 rounded">{'{nombre}'}</code> para incluir el nombre del empleado.
+                        Cada frase puede ser <span className="font-semibold text-slate-600">para todos</span> o para un empleado en particular: las de un empleado solo le aparecen a esa persona.
                         {frases && !frases.personalizadas && ' Por ahora se usan las frases predeterminadas: al agregar o quitar una, pasan a ser tuyas.'}
                     </p>
 
@@ -2129,7 +2138,12 @@
                                     <ul className="space-y-2 mb-4 flex-1">
                                         {frases[c.tipo].map((f, i) => (
                                             <li key={i} className="group bg-white rounded-lg border border-slate-200 px-3 py-2 flex items-start gap-2 text-sm text-slate-700">
-                                                <span className="flex-1">“{f}”</span>
+                                                <div className="flex-1 min-w-0">
+                                                    <span>“{f.texto}”</span>
+                                                    <span className={`mt-1 inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded-full ${f.empleadoId === '' ? 'bg-slate-100 text-slate-500' : 'bg-pink-100 text-brand-primary'}`}>
+                                                        {f.empleadoId === '' ? 'Para todos' : <><Icon name="users" className="w-3 h-3"/>{nombreDe(f.empleadoId)}</>}
+                                                    </span>
+                                                </div>
                                                 <button onClick={() => quitar(c.tipo, i)} className="p-1 text-red-600 hover:bg-red-50 rounded opacity-40 group-hover:opacity-100 transition-opacity" title="Eliminar frase">
                                                     <Icon name="trash" className="w-4 h-4"/>
                                                 </button>
@@ -2137,10 +2151,17 @@
                                         ))}
                                         {frases[c.tipo].length === 0 && <li className="text-sm text-slate-500 italic">Sin frases: al fichar no se muestra ninguna.</li>}
                                     </ul>
-                                    <form onSubmit={agregar(c.tipo)} className="flex gap-2">
-                                        <input value={nuevas[c.tipo]} onChange={e => setNuevas({ ...nuevas, [c.tipo]: e.target.value })} maxLength={160} placeholder={c.ejemplo}
-                                            className="flex-1 min-w-0 border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white outline-none focus:ring-2 focus:ring-brand-primary" />
-                                        <button type="submit" className={`px-4 py-2 rounded-lg text-white font-bold text-sm transition-colors ${c.boton}`}>Agregar</button>
+                                    <form onSubmit={agregar(c.tipo)} className="space-y-2">
+                                        <input value={nuevas[c.tipo].texto} onChange={e => setNuevas({ ...nuevas, [c.tipo]: { ...nuevas[c.tipo], texto: e.target.value } })} maxLength={160} placeholder={c.ejemplo}
+                                            className="w-full min-w-0 border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white outline-none focus:ring-2 focus:ring-brand-primary" />
+                                        <div className="flex gap-2">
+                                            <select value={nuevas[c.tipo].empleadoId} onChange={e => setNuevas({ ...nuevas, [c.tipo]: { ...nuevas[c.tipo], empleadoId: e.target.value } })}
+                                                className="flex-1 min-w-0 border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white outline-none focus:ring-2 focus:ring-brand-primary">
+                                                <option value="">Para todos los empleados</option>
+                                                {empleadosOrden.map(e => <option key={e.id} value={e.id}>{e.nombre}</option>)}
+                                            </select>
+                                            <button type="submit" className={`px-4 py-2 rounded-lg text-white font-bold text-sm transition-colors ${c.boton}`}>Agregar</button>
+                                        </div>
                                     </form>
                                 </div>
                             ))}
@@ -2305,7 +2326,7 @@
 
                     <CambiarPassword showToast={showToast} />
 
-                    <FrasesMotivadoras showToast={showToast} />
+                    <FrasesMotivadoras empleados={empleados} showToast={showToast} />
                 </div>
             );
         };
