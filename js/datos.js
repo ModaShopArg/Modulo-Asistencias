@@ -623,6 +623,315 @@ const importarRespaldo = async ({ empleados = [], historial = [], fichajes = [] 
     return escrituras.length;
 };
 
+// ---------- Grupos y horarios (para el informe de dirección) ----------
+// Se guardan en configuracion/horarios. "arriba" = empleados de arriba (un turno);
+// "local" = empleados del local (turno partido). Cada empleado se asigna a un grupo.
+// Los horarios son editables porque cambian según la época del año.
+const HORARIOS_PREDETERMINADOS = {
+    toleranciaMin: 15,
+    grupos: {
+        arriba: { nombre: 'Arriba', turnos: [{ entrada: '07:30', salida: '17:00' }] },
+        local:  { nombre: 'Local',  turnos: [{ entrada: '08:00', salida: '12:30' }, { entrada: '16:30', salida: '20:30' }] }
+    },
+    asignaciones: {} // { [empleadoId]: 'arriba' | 'local' }
+};
+
+const esHoraHHMM = (v) => typeof v === 'string' && /^\d{2}:\d{2}$/.test(v);
+
+const limpiarTurnos = (arr, porDefecto) => {
+    const base = Array.isArray(arr) && arr.length ? arr : porDefecto;
+    return base.map((t, i) => {
+        const def = porDefecto[Math.min(i, porDefecto.length - 1)];
+        return {
+            entrada: esHoraHHMM(t && t.entrada) ? t.entrada : def.entrada,
+            salida:  esHoraHHMM(t && t.salida)  ? t.salida  : def.salida
+        };
+    });
+};
+
+const limpiarHorarios = (d) => {
+    const src = d && typeof d === 'object' ? d : {};
+    const g = src.grupos && typeof src.grupos === 'object' ? src.grupos : {};
+    const tol = Number(src.toleranciaMin);
+    const asign = {};
+    if (src.asignaciones && typeof src.asignaciones === 'object') {
+        Object.keys(src.asignaciones).forEach(k => {
+            const v = src.asignaciones[k];
+            if (v === 'arriba' || v === 'local') asign[String(k)] = v;
+        });
+    }
+    return {
+        toleranciaMin: Number.isFinite(tol) && tol >= 0 ? Math.round(tol) : HORARIOS_PREDETERMINADOS.toleranciaMin,
+        grupos: {
+            arriba: { nombre: 'Arriba', turnos: limpiarTurnos(g.arriba && g.arriba.turnos, HORARIOS_PREDETERMINADOS.grupos.arriba.turnos) },
+            local:  { nombre: 'Local',  turnos: limpiarTurnos(g.local  && g.local.turnos,  HORARIOS_PREDETERMINADOS.grupos.local.turnos) }
+        },
+        asignaciones: asign
+    };
+};
+
+const escucharHorarios = (callback, onError) =>
+    onSnapshot(doc(db, 'configuracion', 'horarios'), snap => {
+        callback(limpiarHorarios(snap.exists() ? snap.data() : null));
+    }, onError);
+
+const guardarHorarios = (cfg) =>
+    setDoc(doc(db, 'configuracion', 'horarios'), limpiarHorarios(cfg));
+
+// ---------- Informe de dirección en Excel ----------
+// La librería (SheetJS) se baja recién al pedir el informe y con versión fija, así una
+// actualización del CDN no puede romper el tablero y la página no depende de ella al abrir.
+let xlsxPromesa = null;
+const cargarXLSX = () => {
+    if (window.XLSX) return Promise.resolve(window.XLSX);
+    if (xlsxPromesa) return xlsxPromesa;
+    xlsxPromesa = new Promise((resolve, reject) => {
+        const s = document.createElement('script');
+        s.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+        s.async = true;
+        s.onload = () => window.XLSX ? resolve(window.XLSX) : reject(new Error('No se pudo inicializar la librería de Excel.'));
+        s.onerror = () => { xlsxPromesa = null; reject(new Error('No se pudo descargar la librería de Excel. Revisá la conexión e intentá de nuevo.')); };
+        document.head.appendChild(s);
+    });
+    return xlsxPromesa;
+};
+
+// 'Agosto 2026' -> 'Julio 2026' (para el comparativo con el mes anterior)
+const periodoAnterior = (periodo) => {
+    const partes = (periodo || '').toLowerCase().trim().split(/\s+/);
+    if (partes.length < 2) return null;
+    let mes = MESES.indexOf(partes[0].replace('setiembre', 'septiembre'));
+    let anio = parseInt(partes[1]);
+    if (mes < 0 || !anio) return null;
+    mes -= 1;
+    if (mes < 0) { mes = 11; anio -= 1; }
+    return `${MESES[mes].charAt(0).toUpperCase()}${MESES[mes].slice(1)} ${anio}`;
+};
+
+const mismoPeriodo = (a, b) => (a || '').toLowerCase().trim() === (b || '').toLowerCase().trim();
+
+// Consolida las liquidaciones de un período por empleado (igual criterio que la tabla en pantalla)
+const consolidarMes = (periodo, historial) => {
+    const m = {};
+    historial.filter(h => mismoPeriodo(h.periodo, periodo)).forEach(r => {
+        if (!r.empleado) return;
+        const id = r.empleado.id;
+        const e = m[id] = m[id] || { id, nombre: r.empleado.nombre, q1: 0, q2: 0, mensual: 0, presentismo: 0, aguinaldo: 0, premios: 0, ctaCte: 0, otrosDesc: 0, total: 0, horasLiq: 0 };
+        if (r.tipoLiquidacion === '1ra Quincena') e.q1 += Number(r.sueldoBase) || 0;
+        else if (r.tipoLiquidacion === '2da Quincena') e.q2 += Number(r.sueldoBase) || 0;
+        else e.mensual += Number(r.sueldoBase) || 0;
+        e.presentismo += Number(r.presentismo) || 0;
+        e.aguinaldo += Number(r.aguinaldo) || 0;
+        e.premios += Number(r.premios) || 0;
+        e.ctaCte += Number(r.descuentoCtaCte) || 0;
+        e.otrosDesc += Number(r.otrosDescuentos) || 0;
+        e.horasLiq += Number(r.totalHoras) || 0;
+        e.total += Number(r.neto) || 0;
+    });
+    return m;
+};
+
+// Horas efectivamente trabajadas (de los fichajes) por empleado, en un conjunto de fichajes
+const horasFichadasPorEmpleado = (fichajes) => {
+    const m = {};
+    calcularJornadas(fichajes).forEach(j => {
+        if (j.completa) m[j.empleadoId] = (m[j.empleadoId] || 0) + j.horas;
+    });
+    return m;
+};
+
+const horaAMin = (hhmmss) => {
+    const p = String(hhmmss || '').split(':');
+    return (parseInt(p[0]) || 0) * 60 + (parseInt(p[1]) || 0);
+};
+
+// Primera entrada y última salida de cada empleado por día
+const resumenDiario = (fichajes) => {
+    const dias = {};
+    fichajes.forEach(f => {
+        const k = f.empleadoId + '|' + f.fecha;
+        const r = dias[k] || (dias[k] = { empleadoId: f.empleadoId, nombre: f.empleadoNombre, fecha: f.fecha, entrada: null, salida: null });
+        if (f.tipo === 'entrada') { if (!r.entrada || f.timestamp < r.entrada.timestamp) r.entrada = f; }
+        else { if (!r.salida || f.timestamp > r.salida.timestamp) r.salida = f; }
+    });
+    return Object.values(dias).sort((a, b) => a.fecha < b.fecha ? -1 : a.fecha > b.fecha ? 1 : 0);
+};
+
+// Genera y descarga el informe de dirección (.xlsx) del período elegido.
+const descargarExcelCEO = async ({ mes, empleados, historial, horarios }) => {
+    const XLSX = await cargarXLSX();
+    const cfg = limpiarHorarios(horarios);
+    const rango = rangoDePeriodo(mes);
+    if (!rango) throw new Error('Período inválido.');
+    const mesAnt = periodoAnterior(mes);
+    const rangoAnt = mesAnt ? rangoDePeriodo(mesAnt) : null;
+
+    const [fichajesMes, fichajesAnt] = await Promise.all([
+        obtenerFichajes(rangoEnMs(rango.desde, rango.hasta)),
+        rangoAnt ? obtenerFichajes(rangoEnMs(rangoAnt.desde, rangoAnt.hasta)) : Promise.resolve([])
+    ]);
+
+    const infoEmp = {};
+    empleados.forEach(e => { infoEmp[e.id] = { nombre: e.nombre, puesto: e.puesto || '', horasBase: e.horasBase || 190, grupo: cfg.asignaciones[String(e.id)] || '' }; });
+
+    const consolidadoMes = consolidarMes(mes, historial);
+    const consolidadoAnt = mesAnt ? consolidarMes(mesAnt, historial) : {};
+    const horasFichMes = horasFichadasPorEmpleado(fichajesMes);
+    const horasFichAnt = horasFichadasPorEmpleado(fichajesAnt);
+
+    const nombreDe = (id, respaldo) => (infoEmp[id] && infoEmp[id].nombre) || respaldo || 'Empleado eliminado';
+    const redondear = (n) => Math.round((Number(n) || 0) * 100) / 100;
+
+    const wb = XLSX.utils.book_new();
+
+    // ----- Hoja 1: Sueldos y horas -----
+    const h1 = [[`Informe de sueldos y horas — ${mes}`], [], [
+        'Empleado', 'Puesto', '1ra Quincena', '2da Quincena', 'Total del mes',
+        'Presentismo', 'Aguinaldo', 'Premios', 'Descuentos', 'Horas liquidadas', 'Horas fichadas', 'Horas base'
+    ]];
+    const idsMes = Object.keys(consolidadoMes).map(Number).filter(id => {
+        const e = consolidadoMes[id];
+        return e.total !== 0 || e.ctaCte !== 0 || e.otrosDesc !== 0;
+    }).sort((a, b) => nombreDe(a).localeCompare(nombreDe(b)));
+
+    const tot1 = { q1: 0, q2: 0, total: 0, presentismo: 0, aguinaldo: 0, premios: 0, desc: 0, horasLiq: 0, horasFich: 0 };
+    idsMes.forEach(id => {
+        const e = consolidadoMes[id];
+        const desc = e.ctaCte + e.otrosDesc;
+        const hFich = redondear(horasFichMes[id] || 0);
+        h1.push([
+            nombreDe(id, e.nombre), (infoEmp[id] && infoEmp[id].puesto) || '',
+            redondear(e.q1), redondear(e.q2), redondear(e.total),
+            redondear(e.presentismo), redondear(e.aguinaldo), redondear(e.premios),
+            redondear(desc), redondear(e.horasLiq), hFich, (infoEmp[id] && infoEmp[id].horasBase) || 190
+        ]);
+        tot1.q1 += e.q1; tot1.q2 += e.q2; tot1.total += e.total; tot1.presentismo += e.presentismo;
+        tot1.aguinaldo += e.aguinaldo; tot1.premios += e.premios; tot1.desc += desc;
+        tot1.horasLiq += e.horasLiq; tot1.horasFich += (horasFichMes[id] || 0);
+    });
+    h1.push([
+        'TOTALES', '', redondear(tot1.q1), redondear(tot1.q2), redondear(tot1.total),
+        redondear(tot1.presentismo), redondear(tot1.aguinaldo), redondear(tot1.premios),
+        redondear(tot1.desc), redondear(tot1.horasLiq), redondear(tot1.horasFich), ''
+    ]);
+    if (idsMes.length === 0) h1.push([], ['No hay liquidaciones cargadas para este período.']);
+    const ws1 = XLSX.utils.aoa_to_sheet(h1);
+    ws1['!cols'] = [{ wch: 26 }, { wch: 18 }, { wch: 14 }, { wch: 14 }, { wch: 15 }, { wch: 13 }, { wch: 13 }, { wch: 12 }, { wch: 13 }, { wch: 15 }, { wch: 14 }, { wch: 11 }];
+    aplicarFormatos(XLSX, ws1, 3, { 2: FMT_PESOS, 3: FMT_PESOS, 4: FMT_PESOS, 5: FMT_PESOS, 6: FMT_PESOS, 7: FMT_PESOS, 8: FMT_PESOS, 9: FMT_HORAS, 10: FMT_HORAS });
+    XLSX.utils.book_append_sheet(wb, ws1, 'Sueldos y horas');
+
+    // ----- Hoja 2: Comparativo con el mes anterior -----
+    const h2 = [[`Comparativo ${mes} vs ${mesAnt || '—'}`], [], [
+        'Empleado', 'Puesto', `Total ${mes}`, `Total ${mesAnt || 'ant.'}`, 'Diferencia $', 'Diferencia %',
+        `Horas fich. ${mes}`, `Horas fich. ${mesAnt || 'ant.'}`, 'Dif. horas'
+    ]];
+    const idsComp = Array.from(new Set([...Object.keys(consolidadoMes), ...Object.keys(consolidadoAnt)].map(Number)))
+        .filter(id => (consolidadoMes[id] && (consolidadoMes[id].total || consolidadoMes[id].ctaCte || consolidadoMes[id].otrosDesc)) ||
+                      (consolidadoAnt[id] && (consolidadoAnt[id].total || consolidadoAnt[id].ctaCte || consolidadoAnt[id].otrosDesc)))
+        .sort((a, b) => nombreDe(a).localeCompare(nombreDe(b)));
+    const tot2 = { act: 0, ant: 0, hAct: 0, hAnt: 0 };
+    idsComp.forEach(id => {
+        const act = (consolidadoMes[id] && consolidadoMes[id].total) || 0;
+        const ant = (consolidadoAnt[id] && consolidadoAnt[id].total) || 0;
+        const hAct = horasFichMes[id] || 0;
+        const hAnt = horasFichAnt[id] || 0;
+        const dif = act - ant;
+        const difPct = ant !== 0 ? redondear((dif / ant) * 100) : '';
+        h2.push([
+            nombreDe(id), (infoEmp[id] && infoEmp[id].puesto) || '',
+            redondear(act), redondear(ant), redondear(dif), difPct,
+            redondear(hAct), redondear(hAnt), redondear(hAct - hAnt)
+        ]);
+        tot2.act += act; tot2.ant += ant; tot2.hAct += hAct; tot2.hAnt += hAnt;
+    });
+    const difTot = tot2.act - tot2.ant;
+    h2.push([
+        'TOTALES', '', redondear(tot2.act), redondear(tot2.ant), redondear(difTot),
+        tot2.ant !== 0 ? redondear((difTot / tot2.ant) * 100) : '',
+        redondear(tot2.hAct), redondear(tot2.hAnt), redondear(tot2.hAct - tot2.hAnt)
+    ]);
+    const ws2 = XLSX.utils.aoa_to_sheet(h2);
+    ws2['!cols'] = [{ wch: 26 }, { wch: 18 }, { wch: 16 }, { wch: 16 }, { wch: 14 }, { wch: 13 }, { wch: 16 }, { wch: 16 }, { wch: 12 }];
+    aplicarFormatos(XLSX, ws2, 3, { 2: FMT_PESOS, 3: FMT_PESOS, 4: FMT_PESOS, 5: FMT_PCT, 6: FMT_HORAS, 7: FMT_HORAS, 8: FMT_HORAS });
+    XLSX.utils.book_append_sheet(wb, ws2, 'Comparativo');
+
+    // ----- Hoja 3: Puntualidad -----
+    const etiquetaGrupo = (g) => g === 'arriba' ? 'Arriba' : g === 'local' ? 'Local' : '';
+    const esperadoDe = (g) => {
+        const turnos = cfg.grupos[g] ? cfg.grupos[g].turnos : [];
+        if (!turnos.length) return null;
+        return { entrada: turnos[0].entrada, salida: turnos[turnos.length - 1].salida };
+    };
+    const dias = resumenDiario(fichajesMes);
+    const asignados = empleados.filter(e => infoEmp[e.id].grupo);
+    const sinGrupoConFichajes = Array.from(new Set(fichajesMes.map(f => f.empleadoId)))
+        .filter(id => !(infoEmp[id] && infoEmp[id].grupo))
+        .map(id => nombreDe(id));
+
+    const h3 = [[`Puntualidad — ${mes}`], [`Tolerancia: ${cfg.toleranciaMin} min · Arriba ${esperadoDe('arriba').entrada}–${esperadoDe('arriba').salida} · Local ${cfg.grupos.local.turnos.map(t => t.entrada + '–' + t.salida).join(' y ')}`]];
+    if (sinGrupoConFichajes.length) h3.push([`Sin grupo asignado (no evaluados): ${sinGrupoConFichajes.join(', ')}`]);
+    h3.push([]);
+
+    // Resumen por empleado
+    h3.push(['RESUMEN POR EMPLEADO']);
+    h3.push(['Empleado', 'Grupo', 'Días trabajados', 'Días con tardanza', 'Días que salió antes']);
+    const resumenEmp = {};
+    const detalle = [];
+    asignados.sort((a, b) => a.nombre.localeCompare(b.nombre)).forEach(emp => {
+        const g = infoEmp[emp.id].grupo;
+        const esp = esperadoDe(g);
+        resumenEmp[emp.id] = { dias: 0, tarde: 0, antes: 0 };
+        dias.filter(d => d.empleadoId === emp.id).forEach(d => {
+            resumenEmp[emp.id].dias++;
+            const entMin = d.entrada ? horaAMin(d.entrada.hora) : null;
+            const salMin = d.salida ? horaAMin(d.salida.hora) : null;
+            const minTarde = (entMin != null && esp) ? entMin - (horaAMin(esp.entrada) + cfg.toleranciaMin) : null;
+            const minAntes = (salMin != null && esp) ? horaAMin(esp.salida) - salMin : null;
+            const tarde = minTarde != null && minTarde > 0;
+            const antes = minAntes != null && minAntes > 0;
+            if (tarde) resumenEmp[emp.id].tarde++;
+            if (antes) resumenEmp[emp.id].antes++;
+            detalle.push([
+                emp.nombre, etiquetaGrupo(g), fechaCorta(d.fecha),
+                d.entrada ? d.entrada.hora.slice(0, 5) : '—',
+                d.salida ? d.salida.hora.slice(0, 5) : '—',
+                esp ? esp.entrada : '', esp ? esp.salida : '',
+                tarde ? 'Sí' : 'No', tarde ? minTarde : '',
+                antes ? 'Sí' : 'No', antes ? minAntes : ''
+            ]);
+        });
+        const r = resumenEmp[emp.id];
+        h3.push([emp.nombre, etiquetaGrupo(g), r.dias, r.tarde, r.antes]);
+    });
+    h3.push([]);
+    h3.push(['DETALLE DIARIO']);
+    h3.push(['Empleado', 'Grupo', 'Fecha', 'Entrada', 'Salida', 'Entrada esperada', 'Salida esperada', '¿Tarde?', 'Min. tarde', '¿Salió antes?', 'Min. antes']);
+    if (asignados.length === 0) h3.push(['No hay empleados asignados a ningún grupo. Asignalos desde "Grupos y horarios".']);
+    detalle.forEach(fila => h3.push(fila));
+    const ws3 = XLSX.utils.aoa_to_sheet(h3);
+    ws3['!cols'] = [{ wch: 24 }, { wch: 10 }, { wch: 12 }, { wch: 9 }, { wch: 9 }, { wch: 15 }, { wch: 15 }, { wch: 9 }, { wch: 10 }, { wch: 13 }, { wch: 10 }];
+    XLSX.utils.book_append_sheet(wb, ws3, 'Puntualidad');
+
+    XLSX.writeFile(wb, `Informe_CEO_${String(mes).replace(/\s+/g, '_')}.xlsx`);
+};
+
+const FMT_PESOS = '"$ "#,##0.00';
+const FMT_HORAS = '#,##0.00';
+const FMT_PCT = '#,##0.0"%"';
+
+// Aplica un formato de número a columnas (por índice) desde la fila `desde` hasta el final
+const aplicarFormatos = (XLSX, ws, desde, formatos) => {
+    if (!ws['!ref']) return;
+    const rango = XLSX.utils.decode_range(ws['!ref']);
+    for (let R = desde; R <= rango.e.r; R++) {
+        Object.keys(formatos).forEach(c => {
+            const ref = XLSX.utils.encode_cell({ r: R, c: Number(c) });
+            const celda = ws[ref];
+            if (celda && celda.t === 'n') celda.z = formatos[c];
+        });
+    }
+};
+
 window.Datos = {
     configurado,
     ZONA_AR,
@@ -662,6 +971,11 @@ window.Datos = {
     escucharFrases,
     guardarFrases,
     restaurarFrases,
+    HORARIOS_PREDETERMINADOS,
+    escucharHorarios,
+    guardarHorarios,
+    descargarExcelCEO,
+    periodoAnterior,
     importarRespaldo,
     esPinValido,
     hashPin,
