@@ -1796,6 +1796,7 @@
             const [hasta, setHasta] = useState(hoyAR);
             const [filtroEmp, setFiltroEmp] = useState('');
             const [vista, setVista] = useState('jornadas');
+            const [soloIncompletas, setSoloIncompletas] = useState(false); // en la vista Jornadas, mostrar solo las que faltan corregir
             const [edicion, setEdicion] = useState(null); // jornada que se está cargando o corrigiendo
             const [errorEdicion, setErrorEdicion] = useState('');
             const [guardandoJornada, setGuardandoJornada] = useState(false);
@@ -1827,6 +1828,12 @@
             ), [fichajes, desde, hasta, filtroEmp]);
 
             const jornadas = useMemo(() => Datos.calcularJornadas(fichajesFiltrados), [fichajesFiltrados]);
+
+            // Lo que se muestra en la tabla de la vista Jornadas (todas, o solo las que faltan corregir)
+            const jornadasVista = useMemo(
+                () => soloIncompletas ? jornadas.filter(j => !j.completa && !j.enCurso) : jornadas,
+                [jornadas, soloIncompletas]
+            );
 
             const resumenPorEmpleado = useMemo(() => {
                 const res = {};
@@ -1985,10 +1992,10 @@
                             <p className="text-4xl font-black text-slate-800">{fichajesHoy}</p>
                             <p className="text-xs text-slate-400 mt-1">{Datos.fechaLarga()}</p>
                         </div>
-                        <div className={`rounded-2xl p-5 shadow-sm border ${totalIncompletas ? 'bg-amber-50 border-amber-200' : 'bg-white border-slate-200'}`}>
+                        <div onClick={() => { if (totalIncompletas) { setVista('jornadas'); setSoloIncompletas(true); } }} className={`rounded-2xl p-5 shadow-sm border transition-colors ${totalIncompletas ? 'bg-amber-50 border-amber-200 hover:bg-amber-100 cursor-pointer' : 'bg-white border-slate-200'}`}>
                             <p className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-2">Jornadas incompletas</p>
                             <p className={`text-4xl font-black ${totalIncompletas ? 'text-amber-600' : 'text-slate-800'}`}>{totalIncompletas}</p>
-                            <p className="text-xs text-slate-400 mt-1">En el rango filtrado. Corregilas con el botón Editar de cada jornada.</p>
+                            <p className="text-xs text-slate-400 mt-1">{totalIncompletas ? 'En el rango filtrado. Tocá para ver solo estas y corregirlas.' : 'En el rango filtrado. Corregilas con el botón Editar de cada jornada.'}</p>
                         </div>
                     </div>
 
@@ -2017,6 +2024,11 @@
                                         <button key={id} onClick={() => setVista(id)} className={`px-3 py-1.5 text-sm font-bold rounded-md transition-colors ${vista === id ? 'bg-white text-brand-primary shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>{label}</button>
                                     ))}
                                 </div>
+                                {vista === 'jornadas' && (
+                                    <button onClick={() => setSoloIncompletas(v => !v)} title="Mostrar solo las jornadas que faltan corregir" className={`flex items-center gap-1.5 text-sm font-bold px-3 py-1.5 rounded-lg transition-colors ${soloIncompletas ? 'bg-amber-500 text-white hover:bg-amber-600' : 'bg-amber-100 text-amber-700 hover:bg-amber-200'}`}>
+                                        <Icon name="alert-triangle" className="w-4 h-4"/> {soloIncompletas ? 'Viendo incompletas' : 'Solo incompletas'}
+                                    </button>
+                                )}
                                 <button onClick={exportarCSV} className="flex items-center gap-1.5 text-sm font-bold bg-emerald-100 text-emerald-700 px-3 py-1.5 rounded-lg hover:bg-emerald-200 transition-colors">
                                     <Icon name="download" className="w-4 h-4"/> CSV
                                 </button>
@@ -2038,7 +2050,7 @@
                                         </tr>
                                     </thead>
                                     <tbody className="divide-y divide-slate-100">
-                                        {jornadas.map((j, idx) => (
+                                        {jornadasVista.map((j, idx) => (
                                             <tr key={idx} className={`hover:bg-slate-50 ${!j.completa && !j.enCurso ? 'bg-amber-50/50' : ''}`}>
                                                 <td className="py-3 px-5 font-semibold text-slate-600">{Datos.fechaCorta(j.fecha)}</td>
                                                 <td className="py-3 px-5 font-bold text-slate-800">{nombreEmpleado(j.empleadoId, j.empleadoNombre)}</td>
@@ -2062,8 +2074,8 @@
                                                 </td>
                                             </tr>
                                         ))}
-                                        {jornadas.length === 0 && (
-                                            <tr><td colSpan="7"className="py-10 text-center text-slate-400 font-medium">{cargando ? 'Cargando...' : 'No hay fichajes en el rango seleccionado.'}</td></tr>
+                                        {jornadasVista.length === 0 && (
+                                            <tr><td colSpan="7"className="py-10 text-center text-slate-400 font-medium">{cargando ? 'Cargando...' : (soloIncompletas ? 'No hay jornadas incompletas en el rango. ¡Todo al día!' : 'No hay fichajes en el rango seleccionado.')}</td></tr>
                                         )}
                                     </tbody>
                                 </table>
