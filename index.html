@@ -1261,11 +1261,146 @@
             );
         };
 
-        const SeccionInformes = ({ historial, empleados, setPrintData, handleDelete, handleEdit, handleUpdateNota }) => {
+        // Modal: asignar cada empleado a un grupo (Arriba / Local) y editar los horarios de cada grupo.
+        // Lo usa el informe de puntualidad. Los horarios se guardan en configuracion/horarios.
+        const PanelHorarios = ({ empleados, horarios, onCerrar, showToast }) => {
+            const clonar = (h) => ({
+                toleranciaMin: h.toleranciaMin,
+                grupos: {
+                    arriba: { turnos: h.grupos.arriba.turnos.map(t => ({ ...t })) },
+                    local:  { turnos: h.grupos.local.turnos.map(t => ({ ...t })) }
+                },
+                asignaciones: { ...h.asignaciones }
+            });
+            const [draft, setDraft] = useState(() => clonar(horarios));
+            const [guardando, setGuardando] = useState(false);
+
+            const empleadosOrden = [...empleados].sort((a, b) => (a.nombre || '').localeCompare(b.nombre || ''));
+
+            const setTurno = (grupo, idx, campo, valor) => setDraft(d => {
+                const nd = clonar(d);
+                nd.grupos[grupo].turnos[idx][campo] = valor;
+                return nd;
+            });
+            const setAsignacion = (empId, grupo) => setDraft(d => {
+                const nd = clonar(d);
+                if (grupo) nd.asignaciones[String(empId)] = grupo;
+                else delete nd.asignaciones[String(empId)];
+                return nd;
+            });
+
+            const guardar = async () => {
+                setGuardando(true);
+                try {
+                    await Datos.guardarHorarios(draft);
+                    showToast && showToast('Grupos y horarios guardados.', 'success');
+                    onCerrar();
+                } catch (e) {
+                    showToast && showToast('No se pudo guardar: ' + Datos.errorAmigable(e), 'error');
+                    setGuardando(false);
+                }
+            };
+
+            const editorTurno = (grupo, idx, etiqueta) => (
+                <div className="flex items-center gap-2 text-sm">
+                    {etiqueta && <span className="text-slate-500 w-14">{etiqueta}</span>}
+                    <input type="time" value={draft.grupos[grupo].turnos[idx].entrada} onChange={e => setTurno(grupo, idx, 'entrada', e.target.value)} className="rounded-lg border-slate-300 border p-1.5 bg-slate-50 font-semibold" />
+                    <span className="text-slate-400">a</span>
+                    <input type="time" value={draft.grupos[grupo].turnos[idx].salida} onChange={e => setTurno(grupo, idx, 'salida', e.target.value)} className="rounded-lg border-slate-300 border p-1.5 bg-slate-50 font-semibold" />
+                </div>
+            );
+
+            const sinAsignar = empleadosOrden.filter(e => !draft.asignaciones[String(e.id)]).length;
+
+            return (
+                <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={onCerrar}>
+                    <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
+                        <div className="flex justify-between items-center p-6 border-b border-slate-200">
+                            <div className="flex items-center gap-3">
+                                <Icon name="settings" className="w-6 h-6 text-brand-primary" />
+                                <h3 className="text-xl font-black text-slate-800">Grupos y horarios</h3>
+                            </div>
+                            <button onClick={onCerrar} className="text-slate-400 hover:text-black"><Icon name="x" /></button>
+                        </div>
+
+                        <div className="p-6 overflow-y-auto space-y-6">
+                            <p className="text-sm text-slate-500">Estos datos solo se usan para la hoja de <b>Puntualidad</b> del informe. Cambiá los horarios cuando varíen según la época del año.</p>
+
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div className="bg-slate-50 rounded-xl border border-slate-200 p-4 space-y-3">
+                                    <p className="font-bold text-slate-700">Arriba <span className="text-xs font-normal text-slate-400">(un turno)</span></p>
+                                    {editorTurno('arriba', 0)}
+                                </div>
+                                <div className="bg-slate-50 rounded-xl border border-slate-200 p-4 space-y-3">
+                                    <p className="font-bold text-slate-700">Local <span className="text-xs font-normal text-slate-400">(turno partido)</span></p>
+                                    {editorTurno('local', 0, 'Mañana')}
+                                    {editorTurno('local', 1, 'Tarde')}
+                                </div>
+                            </div>
+
+                            <div className="flex items-center gap-3">
+                                <label className="text-sm font-bold text-slate-700">Tolerancia de entrada:</label>
+                                <input type="number" min="0" value={draft.toleranciaMin} onChange={e => setDraft(d => ({ ...clonar(d), toleranciaMin: Math.max(0, parseInt(e.target.value) || 0) }))} className="rounded-lg border-slate-300 border p-1.5 bg-slate-50 font-semibold w-20 text-sm" />
+                                <span className="text-sm text-slate-500">minutos (recién después se cuenta como tarde)</span>
+                            </div>
+
+                            <div>
+                                <div className="flex justify-between items-center mb-2">
+                                    <p className="font-bold text-slate-700">Empleados</p>
+                                    {sinAsignar > 0 && <span className="text-xs font-bold text-amber-700 bg-amber-100 px-2 py-1 rounded">{sinAsignar} sin asignar</span>}
+                                </div>
+                                <div className="border border-slate-200 rounded-xl divide-y divide-slate-100 max-h-72 overflow-y-auto">
+                                    {empleadosOrden.map(e => (
+                                        <div key={e.id} className="flex items-center justify-between gap-3 px-4 py-2">
+                                            <span className="text-sm font-medium text-slate-700 truncate">{e.nombre} <span className="text-slate-400 font-normal">· {e.puesto || 's/puesto'}</span></span>
+                                            <select value={draft.asignaciones[String(e.id)] || ''} onChange={ev => setAsignacion(e.id, ev.target.value)} className="rounded-lg border-slate-300 border p-1.5 bg-slate-50 font-semibold text-sm shrink-0">
+                                                <option value="">Sin asignar</option>
+                                                <option value="arriba">Arriba</option>
+                                                <option value="local">Local</option>
+                                            </select>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="flex justify-end gap-3 p-6 border-t border-slate-200">
+                            <button onClick={onCerrar} className="px-5 py-2.5 rounded-lg font-bold text-slate-600 hover:bg-slate-100 transition-colors">Cancelar</button>
+                            <button onClick={guardar} disabled={guardando} className="flex items-center gap-2 bg-brand-primary text-white px-5 py-2.5 rounded-lg font-bold hover:bg-opacity-90 transition-colors shadow-md disabled:opacity-50">
+                                <Icon name="save" className="w-5 h-5" /> {guardando ? 'Guardando…' : 'Guardar'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        const SeccionInformes = ({ historial, empleados, setPrintData, handleDelete, handleEdit, handleUpdateNota, showToast }) => {
             const [subVista, setSubVista] = useState('mensual');
             const [filtroMes, setFiltroMes] = useState('');
             const [filtroEmp, setFiltroEmp] = useState('');
             const [busqueda, setBusqueda] = useState('');
+            const [horarios, setHorarios] = useState(Datos.HORARIOS_PREDETERMINADOS);
+            const [panelHorarios, setPanelHorarios] = useState(false);
+            const [generandoExcel, setGenerandoExcel] = useState(false);
+
+            useEffect(() => Datos.escucharHorarios(
+                (cfg) => setHorarios(cfg),
+                (err) => showToast && showToast('No se pudo leer la configuración de horarios: ' + Datos.errorAmigable(err), 'error')
+            ), []);
+
+            const descargarExcel = async () => {
+                if (!filtroMes) { showToast && showToast('Elegí un período primero.', 'error'); return; }
+                setGenerandoExcel(true);
+                try {
+                    await Datos.descargarExcelCEO({ mes: filtroMes, empleados, historial, horarios });
+                    showToast && showToast('Informe de dirección descargado.', 'success');
+                } catch (e) {
+                    showToast && showToast(e.message || 'No se pudo generar el informe.', 'error');
+                } finally {
+                    setGenerandoExcel(false);
+                }
+            };
 
             const periodosDisponibles = useMemo(() => {
                 const periodos = historial.map(h => h.periodo);
@@ -1377,16 +1512,25 @@
                                         {periodosDisponibles.map(p => <option key={p} value={p}>{p}</option>)}
                                     </select>
                                 </div>
-                                <button onClick={() => { 
-                                    const originalTitle = document.title;
-                                    document.title = `Reporte_${filtroMes.replace(' ', '_')}`;
-                                    setPrintData({ type: 'informe', mes: filtroMes, datos: datosInforme }); 
-                                    setTimeout(() => window.print(), 100); 
-                                    document.title = originalTitle;
-                                }} className="flex items-center justify-center gap-2 bg-emerald-600 text-white px-5 py-2.5 rounded-lg font-bold hover:bg-emerald-700 transition-colors shadow-md">
-                                    <Icon name="printer" className="w-5 h-5" /> Exportar a PDF
-                                </button>
+                                <div className="flex flex-wrap gap-2">
+                                    <button onClick={() => setPanelHorarios(true)} className="flex items-center justify-center gap-2 bg-slate-100 text-slate-700 px-4 py-2.5 rounded-lg font-bold hover:bg-slate-200 transition-colors border border-slate-200" title="Asignar grupos y editar horarios para el informe de puntualidad">
+                                        <Icon name="settings" className="w-5 h-5" /> Grupos y horarios
+                                    </button>
+                                    <button onClick={descargarExcel} disabled={generandoExcel || !filtroMes} className="flex items-center justify-center gap-2 bg-green-700 text-white px-5 py-2.5 rounded-lg font-bold hover:bg-green-800 transition-colors shadow-md disabled:opacity-50 disabled:cursor-not-allowed">
+                                        <Icon name="download" className="w-5 h-5" /> {generandoExcel ? 'Generando…' : 'Descargar Excel (CEO)'}
+                                    </button>
+                                    <button onClick={() => {
+                                        const originalTitle = document.title;
+                                        document.title = `Reporte_${filtroMes.replace(' ', '_')}`;
+                                        setPrintData({ type: 'informe', mes: filtroMes, datos: datosInforme });
+                                        setTimeout(() => window.print(), 100);
+                                        document.title = originalTitle;
+                                    }} className="flex items-center justify-center gap-2 bg-emerald-600 text-white px-5 py-2.5 rounded-lg font-bold hover:bg-emerald-700 transition-colors shadow-md">
+                                        <Icon name="printer" className="w-5 h-5" /> Exportar a PDF
+                                    </button>
+                                </div>
                             </div>
+                            {panelHorarios && <PanelHorarios empleados={empleados} horarios={horarios} onCerrar={() => setPanelHorarios(false)} showToast={showToast} />}
                             
                             <div className="overflow-x-auto p-6 bg-slate-50/50">
                                 <table className="w-full text-left text-sm border-collapse border border-slate-300 bg-white">
@@ -2776,13 +2920,14 @@
 
                             {activeTab === 'informes' && (
                                 <div className="p-8">
-                                    <SeccionInformes 
-                                        historial={historial} 
-                                        empleados={empleados} 
-                                        setPrintData={setPrintData} 
-                                        handleDelete={handleDeleteRecibo} 
-                                        handleEdit={handleEditRecibo} 
+                                    <SeccionInformes
+                                        historial={historial}
+                                        empleados={empleados}
+                                        setPrintData={setPrintData}
+                                        handleDelete={handleDeleteRecibo}
+                                        handleEdit={handleEditRecibo}
                                         handleUpdateNota={handleUpdateNota}
+                                        showToast={showToast}
                                     />
                                 </div>
                             )}
