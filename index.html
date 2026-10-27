@@ -2146,6 +2146,9 @@
                     {edicion && (() => {
                         const ed = edicion;
                         const cambiar = (campo) => (e) => { setErrorEdicion(''); setEdicion({ ...ed, [campo]: e.target.value }); };
+                        // Borrar una marca suelta (entrada o salida) desde el modal. Cierra el modal y
+                        // dispara la misma confirmación que la vista Registros antes de eliminar.
+                        const eliminarMarca = (marca) => { if (marca) { setEdicion(null); onEliminarFichaje(marca); } };
                         const campo = "w-full border border-slate-300 p-3 rounded-lg focus:ring-2 focus:ring-brand-primary outline-none";
                         // Vista previa de las horas trabajadas con lo cargado
                         let previa = '';
@@ -2175,14 +2178,28 @@
                                             <p className="font-bold text-slate-800 bg-slate-50 border border-slate-200 rounded-lg p-3">{nombreEmpleado(parseInt(ed.empleadoId), ed.empleadoNombre)}</p>
                                         )}
                                         <div>
-                                            <label className="block text-xs font-bold text-emerald-700 uppercase mb-1">Entrada</label>
+                                            <label className="flex items-center justify-between text-xs font-bold text-emerald-700 uppercase mb-1">
+                                                <span>Entrada</span>
+                                                {!ed.nueva && ed.entrada && (
+                                                    <button type="button" onClick={() => eliminarMarca(ed.entrada)} title="Eliminar esta marca de entrada" className="flex items-center gap-1 text-red-600 hover:text-red-700 normal-case font-bold">
+                                                        <Icon name="trash" className="w-3.5 h-3.5"/> Eliminar
+                                                    </button>
+                                                )}
+                                            </label>
                                             <div className="grid grid-cols-2 gap-3">
                                                 <input required type="date" value={ed.entradaFecha} onChange={cambiar('entradaFecha')} className={campo} />
                                                 <input required type="time" value={ed.entradaHora} onChange={cambiar('entradaHora')} className={campo} />
                                             </div>
                                         </div>
                                         <div>
-                                            <label className="block text-xs font-bold text-brand-primary uppercase mb-1">Salida {!ed.salida && <span className="text-slate-400 normal-case font-semibold">(vacía si sigue trabajando)</span>}</label>
+                                            <label className="flex items-center justify-between text-xs font-bold text-brand-primary uppercase mb-1">
+                                                <span>Salida {!ed.salida && <span className="text-slate-400 normal-case font-semibold">(vacía si sigue trabajando)</span>}</span>
+                                                {!ed.nueva && ed.salida && (
+                                                    <button type="button" onClick={() => eliminarMarca(ed.salida)} title="Eliminar esta marca de salida" className="flex items-center gap-1 text-red-600 hover:text-red-700 normal-case font-bold">
+                                                        <Icon name="trash" className="w-3.5 h-3.5"/> Eliminar
+                                                    </button>
+                                                )}
+                                            </label>
                                             <div className="grid grid-cols-2 gap-3">
                                                 <input required={!!ed.salida || !!ed.salidaHora} type="date" value={ed.salidaFecha} onChange={cambiar('salidaFecha')} className={campo} />
                                                 <input required={!!ed.salida} type="time" value={ed.salidaHora} onChange={cambiar('salidaHora')} className={campo} />
