@@ -479,10 +479,16 @@ const guardarJornada = async ({ empleadoId, empleadoNombre, entrada, salida, ent
 const ultimoFichaje = (empleadoId, fichajes) =>
     fichajes.filter(f => f.empleadoId === empleadoId).sort((a, b) => b.timestamp - a.timestamp)[0] || null;
 
-// Si la última marca es una entrada reciente, lo que corresponde es la salida.
+// Si la última marca es una entrada reciente y del mismo día, lo que corresponde
+// es la salida. Si la entrada abierta quedó de otra fecha, es un olvido de salida:
+// ninguna jornada cruza la medianoche, así que la próxima marca es la ENTRADA de
+// hoy (no cierra la de ayer). Así el olvido no infla horas ni figura como presente,
+// y administración lo corrige sin apuro desde el tablero.
 const proximoTipo = (empleadoId, fichajes) => {
     const ultimo = ultimoFichaje(empleadoId, fichajes);
-    return ultimo && ultimo.tipo === 'entrada' && ahora() - ultimo.timestamp < JORNADA_MAX_MS ? 'salida' : 'entrada';
+    if (!ultimo || ultimo.tipo !== 'entrada') return 'entrada';
+    if (ultimo.fecha !== partesAR().fecha) return 'entrada';
+    return ahora() - ultimo.timestamp < JORNADA_MAX_MS ? 'salida' : 'entrada';
 };
 
 const estaPresente = (empleadoId, fichajes) => proximoTipo(empleadoId, fichajes) === 'salida';
